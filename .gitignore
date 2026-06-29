@@ -1,0 +1,44 @@
+# Trident package/repository
+TRIDENT/
+
+# GDC
+gdc-client
+
+# UNI V2 Model Weight
+checkpoints/uni_v1
+checkpoints/uni_v2
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Data / ML artifacts
+data/
+!data/interim/matched_clinical_slides.csv
+
+# Setup & Preprocessing
+setup_and_preprocess.sh
+setup_and_preprocess.log
+
+# PyCharm / JetBrains
+.idea/
+*.iml
+
+# VSCode
+.vscode/*
+
+# OS files
+.DS_Store
+Thumbs.db
