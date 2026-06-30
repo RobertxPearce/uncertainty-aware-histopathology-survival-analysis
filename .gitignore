@@ -25,8 +25,8 @@ ENV/
 .ipynb_checkpoints/
 
 # Data / ML artifacts
-data/
-!data/interim/matched_clinical_slides.csv
+data/raw/slides
+data/processed
 
 # Setup & Preprocessing
 setup_and_preprocess.sh
