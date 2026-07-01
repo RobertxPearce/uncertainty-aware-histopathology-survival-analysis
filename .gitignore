@@ -42,3 +42,12 @@ setup_and_preprocess.log
 # OS files
 .DS_Store
 Thumbs.db
+
+# Logs
+logs/
+
+# Model weights & results
+results/
+
+# Zip files
+*.zip
