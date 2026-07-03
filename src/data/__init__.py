@@ -10,6 +10,11 @@ from .split_cases import (
     assign_splits,
     make_splits,
 )
+from .dataset import (
+    SurvivalBagDataset,
+    collate_bags,
+    make_dataloaders,
+)
 
 __all__ = [
     "read_sample_sheet",
@@ -18,7 +23,11 @@ __all__ = [
     "make_survival_metadata",
     "attach_feature_paths",
     "load_survival_metadata",
-    
+
     "assign_splits",
     "make_splits",
+
+    "SurvivalBagDataset",
+    "collate_bags",
+    "make_dataloaders",
 ]
