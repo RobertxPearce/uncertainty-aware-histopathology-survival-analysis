@@ -26,6 +26,7 @@ from huggingface_hub import hf_hub_download
 # The exact checkpoint file each TRIDENT model loads via torch.load(), and the
 # local_ckpts.json registry key TRIDENT looks the path up under.
 UNI_REPO, UNI_CKPT, UNI_KEY = "MahmoodLab/UNI", "pytorch_model.bin", "uni_v1"
+UNI2_REPO, UNI2_CKPT, UNI2_KEY = "MahmoodLab/UNI2-h", "pytorch_model.bin", "uni_v2"
 SEG_REPO, SEG_CKPT, SEG_KEY = "MahmoodLab/hest-tissue-seg", "deeplabv3_seg_v4.ckpt", "hest"
 
 
@@ -46,6 +47,10 @@ def main() -> int:
     uni_path = hf_hub_download(repo_id=UNI_REPO, filename=UNI_CKPT)
     register_ckpt("patch_encoder_models", UNI_KEY, uni_path)
 
+    print(f"\t-> UNI2-h patch encoder ({UNI2_REPO}, gated)...")
+    uni2_path = hf_hub_download(repo_id=UNI2_REPO, filename=UNI2_CKPT)
+    register_ckpt("patch_encoder_models", UNI2_KEY, uni2_path)
+
     print(f"\t-> hest segmentation checkpoint ({SEG_REPO})...")
     seg_path = hf_hub_download(repo_id=SEG_REPO, filename=SEG_CKPT)
     register_ckpt("segmentation_models", SEG_KEY, seg_path)
@@ -58,6 +63,7 @@ def main() -> int:
     from trident.patch_encoder_models import encoder_factory
     segmentation_model_factory("hest")
     encoder_factory(UNI_KEY)
+    encoder_factory(UNI2_KEY)
 
     print(f"\nDone. Weights cached under {_CACHE_ROOT} and registered in "
           f"TRIDENT/local_ckpts.json. The offline GPU jobs can now load them.")
