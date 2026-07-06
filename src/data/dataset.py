@@ -1,26 +1,27 @@
-# Dataset and dataloader for the TRIDENT feature bags.
+# Dataset and dataloaders for the TRIDENT feature bags.
 #
 # Each slide is stored on disk as one .h5 "bag" holding a variable number of
 # patch feature vectors (features: [N, D]) plus their coordinates (coords: [N, 2]).
 # N differs from slide to slide, so a batch of bags cannot be stacked directly:
 # collate_bags pads every bag in a batch up to the largest N and returns a
-# boolean padding mask that TransMIL's attention uses to ignore the pad rows.
-# The per-slide survival table (case_id, slide_id, feature_path, time, event,
-# split) is the same one produced by make_survival_metadata / make_splits.
+# boolean padding mask that the MIL model uses to ignore the pad rows.
+#
+# The data-loading workflow is three explicit stages, each usable on its own:
+#     load_survival_table(csv) -> make_datasets(table) -> make_dataloaders(datasets)
+# make_dataloaders_from_csv() composes all three for callers who just have a
+# frozen split CSV. Splitting and path resolution happen upstream (make_splits,
+# load_survival_table).
 
 import argparse
 from pathlib import Path
 
 import h5py
 import numpy as np
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from .make_survival_metadata import load_survival_metadata
+from .make_survival_metadata import load_survival_table
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 SPLIT_NAMES = ("train", "val", "test")
 
@@ -31,7 +32,7 @@ class SurvivalBagDataset(Dataset):
 
     Expects a metadata DataFrame with columns: feature_path, time, event and
     (optionally) slide_id / case_id. feature_path must resolve to a readable .h5
-    file; use load_survival_metadata() to turn the relative paths in the CSV into
+    file; use load_survival_table() to turn the relative paths in the CSV into
     absolute ones before constructing the dataset.
 
     Each item is a dict:
@@ -72,8 +73,6 @@ class SurvivalBagDataset(Dataset):
                 f"Feature bag not found for row {idx}: {feature_path}"
             )
 
-        # Open lazily inside __getitem__ so h5py handles stay inside the worker
-        # process that reads them (opening in __init__ is not fork-safe).
         with h5py.File(feature_path, "r") as h5:
             if self.feature_key not in h5:
                 raise KeyError(
@@ -105,7 +104,7 @@ class SurvivalBagDataset(Dataset):
 
 def collate_bags(batch):
     """
-    Pad a list of variable-length bags into a single batch for TransMIL.
+    Pad a list of variable-length bags into a single batch for ABMIL.
 
     Returns a dict:
         features : FloatTensor [B, N_max, D] bags right-padded with zeros
@@ -115,7 +114,7 @@ def collate_bags(batch):
         slide_id : list[str] length B
         case_id  : list[str] length B
 
-    The mask convention (True = pad) matches TransMILSurvival.forward(x, mask).
+    The mask convention is True = pad, so ABMIL excludes padded rows from attention.
     """
     lengths = [item["features"].shape[0] for item in batch]
     n_max = max(lengths)
@@ -139,57 +138,118 @@ def collate_bags(batch):
     }
 
 
-def make_dataloaders(
-    split_csv,
-    batch_size=16,
+def make_datasets(
+    metadata,
     feature_key="features",
     max_patches=None,
-    project_root=PROJECT_ROOT,
+    splits=SPLIT_NAMES,
+    seed=None,
+):
+    """
+    Split a per-slide table by its `split` column and build one dataset per split.
+
+    metadata: DataFrame with a `split` column (from make_splits) plus the columns
+        SurvivalBagDataset needs. Pass the frame returned by load_survival_table
+        so feature paths are already absolute.
+    max_patches caps patches per bag on the *train* split only; val/test always
+        see the full bag so evaluation stays deterministic.
+
+    Returns a dict {split_name: SurvivalBagDataset} holding only the splits that
+    are both requested and non-empty, so downstream code can build loaders for
+    exactly what exists.
+    """
+    if "split" not in metadata.columns:
+        raise ValueError("metadata has no 'split' column; run make_splits first.")
+
+    datasets = {}
+    for name in splits:
+        rows = metadata[metadata["split"] == name]
+        if rows.empty:
+            continue
+        is_train = name == "train"
+        datasets[name] = SurvivalBagDataset(
+            rows,
+            feature_key=feature_key,
+            max_patches=max_patches if is_train else None,
+            seed=seed,
+        )
+    return datasets
+
+
+def make_dataloaders(
+    datasets,
+    batch_size=32,
     num_workers=0,
     generator=None,
     worker_init_fn=None,
-    splits=SPLIT_NAMES,
+    shuffle_train=True,
 ):
     """
-    Build one DataLoader per split from a frozen split CSV.
+    Wrap prepared datasets in DataLoaders and return (train, val, test).
 
-    Reads the split table (case_id, slide_id, feature_path, time, event, split),
-    resolves feature paths to absolute against project_root, and returns a dict
-    mapping each requested split name to its DataLoader. The train loader is
-    shuffled; val/test are not. max_patches is applied to train only, so
-    evaluation always sees the full bag.
+    datasets: dict {split_name: Dataset} as returned by make_datasets. Any split
+        absent from the dict comes back as None, so
+
+            train_loader, val_loader, test_loader = make_dataloaders(datasets)
+
+        unpacks cleanly even when there is no test split. The train loader is
+        shuffled (with `generator` if given); val/test are not.
+
+    This function does no file or path handling -- feed it datasets you built
+    yourself, keeping the data-loading stage explicit and independently usable.
 
     Note on batch_size: the Cox partial likelihood is computed over the risk set
     *within a batch*, so very small batches give noisy gradients and a batch with
     no events contributes nothing. On small cohorts prefer a large batch (or set
     batch_size to the training-set size for full-batch Cox training).
     """
-    metadata = load_survival_metadata(split_csv, project_root=project_root)
-    if "split" not in metadata.columns:
-        raise ValueError(f"{split_csv} has no 'split' column; run make_splits first.")
-
     loaders = {}
-    for name in splits:
-        rows = metadata[metadata["split"] == name]
-        if rows.empty:
-            continue
+    for name, dataset in datasets.items():
         is_train = name == "train"
-        dataset = SurvivalBagDataset(
-            rows,
-            feature_key=feature_key,
-            max_patches=max_patches if is_train else None,
-        )
         loaders[name] = DataLoader(
             dataset,
             batch_size=batch_size,
-            shuffle=is_train,
+            shuffle=is_train and shuffle_train,
             num_workers=num_workers,
             collate_fn=collate_bags,
             generator=generator if is_train else None,
             worker_init_fn=worker_init_fn,
             drop_last=False,
         )
-    return loaders
+    return loaders.get("train"), loaders.get("val"), loaders.get("test")
+
+
+def make_dataloaders_from_csv(
+    split_csv,
+    batch_size=32,
+    feature_key="features",
+    max_patches=None,
+    project_root=None,
+    num_workers=0,
+    generator=None,
+    worker_init_fn=None,
+    splits=SPLIT_NAMES,
+):
+    """
+    Convenience: build (train, val, test) loaders straight from a split CSV.
+
+    Composes the three explicit stages -- load_survival_table -> make_datasets ->
+    make_dataloaders -- for callers who just have a frozen split file. The stages
+    remain available individually when you need a resolved table or a dataset on
+    its own. Returns the same (train, val, test) tuple as make_dataloaders.
+    """
+    table_kwargs = {} if project_root is None else {"project_root": project_root}
+    table = load_survival_table(split_csv, **table_kwargs)
+    datasets = make_datasets(
+        table, feature_key=feature_key, max_patches=max_patches, splits=splits
+    )
+    return make_dataloaders(
+        datasets,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+    )
 
 
 def parse_args():
@@ -208,13 +268,15 @@ def parse_args():
 
 def main():
     args = parse_args()
-    loaders = make_dataloaders(
+    loaders = make_dataloaders_from_csv(
         args.split_csv,
         batch_size=args.batch_size,
         feature_key=args.feature_key,
         max_patches=args.max_patches,
     )
-    for name, loader in loaders.items():
+    for name, loader in zip(SPLIT_NAMES, loaders):
+        if loader is None:
+            continue
         batch = next(iter(loader))
         print(
             f"{name:<6} bags={len(loader.dataset):>4} "

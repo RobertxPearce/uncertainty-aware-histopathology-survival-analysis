@@ -249,10 +249,14 @@ def attach_feature_paths(
     return metadata
 
 
-def load_survival_metadata(csv_path, project_root=PROJECT_ROOT):
+def load_survival_table(csv_path, project_root=PROJECT_ROOT):
     """
-    Read a per-slide survival metadata CSV, resolving relative feature paths to
-    absolute against project_root. Returns a DataFrame ready for the dataset.
+    Read a per-slide survival table CSV, resolving relative feature paths to
+    absolute against project_root. Returns a DataFrame ready for make_datasets.
+
+    This is the one place feature-path resolution lives: downstream stages
+    (make_datasets / make_dataloaders) receive a table with absolute paths and
+    never touch project_root themselves.
     """
     csv_path = Path(csv_path)
     if not csv_path.is_file():
