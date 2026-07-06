@@ -5,7 +5,6 @@ from .make_survival_metadata import (
     make_survival_metadata,
     attach_feature_paths,
     load_survival_table,
-    load_survival_metadata,  # backwards-compatible alias for load_survival_table
 )
 from .split_cases import (
     assign_splits,
@@ -24,7 +23,6 @@ __all__ = [
     "make_survival_metadata",
     "attach_feature_paths",
     "load_survival_table",
-    "load_survival_metadata",
     "read_sample_sheet",
     "read_clinical_tsv",
     "build_survival_table",

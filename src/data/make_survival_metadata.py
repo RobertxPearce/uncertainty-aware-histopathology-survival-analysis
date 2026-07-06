@@ -193,7 +193,7 @@ def attach_feature_paths(
         case_id, slide_id, feature_path, time, event
     One row per feature file, matched to its patient by slide file stem.
     feature_path is stored relative to project_root so the CSV stays portable;
-    use load_survival_metadata() to read it back with absolute paths.
+    use load_survival_table() to read it back with absolute paths.
     Returns the DataFrame and writes it to out_path.
     """
     clinical_csv = Path(clinical_csv)
