@@ -21,22 +21,24 @@ from src import (
     make_splits,
     load_survival_table,
     seed_everything,
-    make_generator,
-    pick_device,
 )
 
 # Experiment/Run Name
-EXPERIMENT_NAME = "uni_v1_luad"
+COHORT          = "TCGA_LUAD"
+ENCODER         = "uni_v1"
+EXPERIMENT_NAME = f"{ENCODER}_luad"
+
+DATA = PROJECT_ROOT / "data"
 
 # Input Paths
-SAMPLE_SHEET = PROJECT_ROOT / "data/raw/gdc_sample_sheet.2026-06-24.tsv"
-CLINICAL_TSV = PROJECT_ROOT / "data/raw/clinical/clinical_supplement/clinical.tsv"
-FEATURE_DIR = PROJECT_ROOT / "data/processed/features/uni_v1/TCGA_LUAD"
+SAMPLE_SHEET = DATA / "raw/gdc_sample_sheet.2026-06-24.tsv"
+CLINICAL_TSV = DATA / "raw/clinical/clinical_supplement/clinical.tsv"
+FEATURE_DIR  = DATA / "processed/features" / ENCODER / COHORT
 # Output Paths
-RUN_DIR = PROJECT_ROOT / "runs" / EXPERIMENT_NAME
-CLINICAL_CSV = RUN_DIR / "clinical_survival.csv"
-METADATA_CSV = RUN_DIR / "survival_metadata.csv"
-SPLIT_CSV = RUN_DIR / "splits.csv"
+SURV_TABLE_CSV  = DATA / "interim/survival_table.csv"
+EXP_DIR         = DATA / "processed/experiments" / EXPERIMENT_NAME
+METADATA_CSV    = EXP_DIR / "survival_metadata.csv"
+SPLIT_CSV       = EXP_DIR / "splits.csv"
 # Log Directory
 LOG_DIR = PROJECT_ROOT / "logs" / EXPERIMENT_NAME
 
@@ -51,23 +53,22 @@ NUM_WORKERS = 0
 
 
 def main():
-    RUN_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     seed_everything(SEED)
     print(f"Seed: {SEED}")
-    
+
     print("Building patient-level survival table...")
     make_survival_metadata(
         sample_sheet_path=SAMPLE_SHEET,
         clinical_tsv_path=CLINICAL_TSV,
-        out_path=CLINICAL_CSV,
+        out_path=SURV_TABLE_CSV,
     )
     print("Done.")
     print()
     print("Joining clinical table to feature bags...")
     attach_feature_paths(
-        clinical_csv=CLINICAL_CSV,
+        clinical_csv=SURV_TABLE_CSV,
         feature_dir=FEATURE_DIR,
         out_path=METADATA_CSV,
     )
