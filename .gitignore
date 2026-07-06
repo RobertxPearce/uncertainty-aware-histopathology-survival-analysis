@@ -1,12 +1,15 @@
 # Trident package/repository
 TRIDENT/
 
-# GDC
-gdc-client
+# Prefetched model weights (ResNet-50, hest, UNI) -- see scripts/prefetch_models.py
+model_cache/
 
-# UNI V2 Model Weight
+# UNI V1/V2 Model Weight
 checkpoints/uni_v1
 checkpoints/uni_v2
+
+# GDC
+gdc-client
 
 # Python
 __pycache__/
