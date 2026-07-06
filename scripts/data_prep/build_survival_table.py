@@ -15,14 +15,14 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-ROOT          = Path(__file__).parent.parent
+ROOT          = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "manifests" / "gdc_manifest_full_luad_dx.txt"
 SLIDES_DIR    = ROOT / "data" / "slides"
 OUT_PATH      = ROOT / "data" / "interim" / "matched_clinical_slides.csv"
 
 GDC_FILES_URL = "https://api.gdc.cancer.gov/files"
 GDC_CASES_URL = "https://api.gdc.cancer.gov/cases"
-BATCH         = 100  # max items per API request
+BATCH         = 100
 
 
 def gdc_post(url, payload, retries=3):
