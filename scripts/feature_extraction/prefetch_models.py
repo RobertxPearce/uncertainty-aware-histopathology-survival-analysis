@@ -15,8 +15,9 @@ TRIDENT_ROOT = PROJECT_ROOT / "TRIDENT"
 # Local pathology TRIDENT must win over the site-packages package of the same name.
 sys.path.insert(0, str(TRIDENT_ROOT))
 
-# Redirect downloads into the repo (must match extract_features_trident.py, and
-# be set before importing trident/huggingface).
+# Redirect downloads into the repo (must match extract_features_trident_uni_v1.py
+# and extract_features_trident_uni_v2.py, and be set before importing
+# trident/huggingface).
 _CACHE_ROOT = PROJECT_ROOT / "model_cache"
 os.environ.setdefault("HF_HUB_CACHE", str(_CACHE_ROOT / "huggingface"))
 os.environ.setdefault("TORCH_HOME", str(_CACHE_ROOT / "torch"))
@@ -55,7 +56,7 @@ def main() -> int:
     seg_path = hf_hub_download(repo_id=SEG_REPO, filename=SEG_CKPT)
     register_ckpt("segmentation_models", SEG_KEY, seg_path)
 
-    # Load both models once (still online here). This caches the ResNet-50
+    # Load all models once (still online here). This caches the ResNet-50
     # backbone into TORCH_HOME and validates that the registered local paths
     # actually load, what the offline nodes will do.
     print("\t-> validating offline load (caches ResNet-50 backbone)...")
