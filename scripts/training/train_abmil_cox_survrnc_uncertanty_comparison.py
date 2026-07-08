@@ -82,13 +82,13 @@ SEED = 42
 # Data Loading
 FEATURE_KEY = "features"  # dataset key inside each .h5 bag
 MAX_PATCHES = 4096  # cap patches per bag on the train split only
-BATCH_SIZE = 16  # Cox risk set is the batch -> prefer larger batches
-NUM_WORKERS = 0
+BATCH_SIZE = 48  # Cox risk set is the batch -> prefer larger batches
+NUM_WORKERS = 4
 
-# Model architecture (kwargs are stored verbatim in the checkpoint's config).
+# Model architecture
 MODEL_CONFIG = dict(
     input_dim=1536,
-    embed_dim=512,
+    embed_dim=256,
     attention_dim=256,
     dropout=0.5,
     gated=True,
@@ -97,13 +97,13 @@ MODEL_CONFIG = dict(
 # Training
 OPTIMIZER = "adamw"
 LR = 1e-4
-WEIGHT_DECAY = 1e-5
+WEIGHT_DECAY = 1e-4
 EPOCHS = 50
 EARLY_STOPPING_PATIENCE = 10
 GRAD_CLIP = 1.0
 
 # SurvRNC Auxiliary Loss: L = Cox + LAMBDA_RNC * SurvRNC
-LAMBDA_RNC = 0.0
+LAMBDA_RNC = 0.5  # SurvRNC weight (paper's beta); 0 = pure Cox. Tune (e.g. 0.1-1.0).
 SURVRNC_TEMPERATURE = 2.0
 
 # Uncertainty
@@ -132,6 +132,63 @@ def make_loss_fn():
         lambda_rnc=LAMBDA_RNC,
         temperature=SURVRNC_TEMPERATURE,
     )
+
+
+def save_run_config(out_path):
+    """
+    Dump every run setting to JSON so a run is self-documenting/reproducible.
+
+    Captures all module-level config constants (the UPPER_CASE names, so new knobs
+    are included automatically) under "settings", plus environment provenance
+    (git commit, timestamp, host, torch version) under "provenance". Paths are
+    stored as strings. Call once at the start of a run.
+    """
+    import json
+    import socket
+    import subprocess
+    from datetime import datetime
+
+    def _jsonable(value):
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {k: _jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_jsonable(v) for v in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)  # fall back to a readable repr for anything exotic
+
+    settings = {
+        name: _jsonable(value)
+        for name, value in globals().items()
+        if name.isupper() and not name.startswith("_")
+    }
+
+    def _git_commit():
+        try:
+            return subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True
+            ).strip()
+        except Exception:
+            return None
+
+    config = {
+        "settings": settings,
+        "provenance": {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "hostname": socket.gethostname(),
+            "git_commit": _git_commit(),
+            "torch": torch.__version__,
+            "script": str(Path(__file__).resolve()),
+        },
+    }
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(config, f, indent=2, sort_keys=True)
+    print(f"Saved run config to: {out_path}")
 
 
 def score(pred_df):
@@ -613,6 +670,7 @@ def generate_plots(predictions, summary, histories, bag_sizes, ood_predictions, 
 
 def main():
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    save_run_config(RUN_DIR / "run_config.json")
     seed_everything(SEED)
     device = pick_device("auto")
     print(f"Device: {device}")

@@ -26,8 +26,7 @@
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/uq_comparison_%j.out
-## Optional: pin to a specific node (leave commented to let SLURM pick within the partition)
-## SBATCH --nodelist=gpu002
+#SBATCH --nodelist=gpu002
 
 set -euo pipefail
 
