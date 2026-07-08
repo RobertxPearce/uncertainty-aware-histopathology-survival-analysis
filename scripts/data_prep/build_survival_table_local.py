@@ -25,7 +25,7 @@ from src import (
 
 # Experiment/Run Name
 COHORT          = "TCGA_LUAD"
-ENCODER         = "uni_v1"
+ENCODER         = "uni_v2"
 EXPERIMENT_NAME = f"{ENCODER}_luad"
 
 DATA = PROJECT_ROOT / "data"
@@ -44,12 +44,6 @@ LOG_DIR = PROJECT_ROOT / "logs" / EXPERIMENT_NAME
 
 # Seed
 SEED = 42
-
-# Data Loading
-FEATURE_KEY = "features"   # Dataset key inside each .h5 bag
-MAX_PATCHES = 4096         # Cap patches per bag on the train split only
-BATCH_SIZE = 16            # Cox risk set is the batch -> prefer larger batches
-NUM_WORKERS = 0
 
 
 def main():
