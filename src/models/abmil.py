@@ -16,23 +16,27 @@ class ABMILEncoder(nn.Module):
         attention_dim=256,
         dropout=0.25,
         gated=True,
+        linear=nn.Linear,
     ):
         super().__init__()
 
         self.gated = gated
 
+        # linear is the layer factory for the encoder's linear maps. It
+        # defaults to nn.Linear; SNGP passes a spectral-normalised variant so the
+        # feature extractor stays distance-aware (see src/models/sngp.py).
         self.patch_proj = nn.Sequential(
-            nn.Linear(input_dim, embed_dim),
+            linear(input_dim, embed_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
 
-        self.attention_v = nn.Linear(embed_dim, attention_dim)
+        self.attention_v = linear(embed_dim, attention_dim)
         if gated:
-            self.attention_u = nn.Linear(embed_dim, attention_dim)
+            self.attention_u = linear(embed_dim, attention_dim)
         else:
             self.attention_u = None
-        self.attention_w = nn.Linear(attention_dim, 1)
+        self.attention_w = linear(attention_dim, 1)
 
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -106,7 +110,7 @@ class ABMILSurvival(nn.Module):
         )
         self.risk_head = nn.Linear(embed_dim, 1)
 
-    def forward(self, x, mask=None, return_attention=False):
+    def forward(self, x, mask=None, return_attention=False, return_embedding=False):
         """
         x: [B, N, D]
         mask: [B, N] bool, optional, True marks padding patches.
@@ -114,15 +118,27 @@ class ABMILSurvival(nn.Module):
         returns:
         risk: [B]
         attention: [B, N], optional when return_attention=True
+        embedding: [B, embed_dim], optional when return_embedding=True
+
+        When both flags are set the order is (risk, attention, embedding). The
+        embedding is the pooled slide representation that feeds the risk head;
+        SurvRNC contrasts on it (see src/losses/survrnc.py).
         """
         if return_attention:
             h, attention = self.encoder(x, mask=mask, return_attention=True)
-            risk = self.risk_head(h).squeeze(-1)
-            return risk, attention
+        else:
+            h = self.encoder(x, mask=mask)
+            attention = None
 
-        h = self.encoder(x, mask=mask)
-        risk = self.risk_head(h)
-        return risk.squeeze(-1)
+        risk = self.risk_head(h).squeeze(-1)
+
+        if return_attention and return_embedding:
+            return risk, attention, h
+        if return_attention:
+            return risk, attention
+        if return_embedding:
+            return risk, h
+        return risk
 
 
 def build_model(input_dim=1024, embed_dim=512, attention_dim=256, dropout=0.25, gated=True):

@@ -1,10 +1,12 @@
 # Train a MIL survival model.
 #
 # The loop is loss-agnostic: pass any survival loss with the signature
-# loss_fn(risk, time, event) (cox_loss is the default). A MIL encoder pools each
-# slide's patch-feature bag into one embedding, a linear risk head turns that
-# into a scalar hazard score, and the loss fits those scores to the (time, event)
-# labels. Validation watches Harrell's C-index to select the best epoch.
+# loss_fn(risk, embedding, time, event) (cox_loss_step is the default). A MIL
+# encoder pools each slide's patch-feature bag into one embedding, a linear risk
+# head turns that into a scalar hazard score, and the loss fits those scores to
+# the (time, event) labels. Losses that only need the risk (e.g. cox) ignore the
+# embedding; representation losses (e.g. SurvRNC) use it. Validation watches
+# Harrell's C-index to select the best epoch.
 #
 # train() receives prepared dataloaders, a model, and an optimizer. It does NOT
 # discover files, split data, construct datasets, or create dataloaders -- that
@@ -28,9 +30,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from functools import partial
+
 from ..data.dataset import make_dataloaders_from_csv
 from ..eval.metrics import concordance_index
 from ..losses.cox import cox_loss
+from ..losses.survrnc import survrnc_cox_loss
 from ..models.abmil import build_model
 from ..utils.device import pick_device
 from ..utils.io import save_checkpoint
@@ -38,6 +43,15 @@ from ..utils.seed import make_generator, seed_everything, worker_init_fn
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+# Loss protocol: the loop calls loss_fn(risk, embedding, time, event). Pure
+# per-scalar losses like cox_loss(risk, time, event) ignore the embedding via
+# this adapter; SurvRNC (survrnc_cox_loss) uses it. This keeps the loop
+# loss-agnostic while supporting losses that need the representation.
+def cox_loss_step(risk, embedding, time, event):
+    """Adapter so the 3-arg cox_loss fits the 4-arg loop protocol."""
+    return cox_loss(risk, time, event)
 
 
 def build_optimizer(model, name="adamw", lr=1e-4, weight_decay=1e-5):
@@ -71,8 +85,8 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device, grad_clip=None):
         if event.sum() == 0:
             continue
 
-        risk = model(features, mask=mask)
-        loss = loss_fn(risk, time, event)
+        risk, embedding = model(features, mask=mask, return_embedding=True)
+        loss = loss_fn(risk, embedding, time, event)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -107,10 +121,10 @@ def evaluate_epoch(model, loader, loss_fn, device):
         time = batch["time"].to(device)
         event = batch["event"].to(device)
 
-        risk = model(features, mask=mask)
+        risk, embedding = model(features, mask=mask, return_embedding=True)
 
         if event.sum() > 0:
-            total_loss += loss_fn(risk, time, event).item()
+            total_loss += loss_fn(risk, embedding, time, event).item()
             n_batches += 1
 
         risks.append(risk.detach().cpu())
@@ -131,7 +145,7 @@ def train(
     train_loader,
     val_loader,
     optimizer,
-    loss_fn=cox_loss,
+    loss_fn=cox_loss_step,
     *,
     epochs=50,
     device="auto",
@@ -261,6 +275,10 @@ def parse_args():
                         help="Optional max-norm for gradient clipping.")
     parser.add_argument("--early-stopping-patience", type=int, default=None,
                         help="Stop after N epochs without a new best val C-index.")
+    parser.add_argument("--lambda-rnc", type=float, default=0.0,
+                        help="Weight of the SurvRNC auxiliary loss (0 = pure Cox).")
+    parser.add_argument("--temperature", type=float, default=2.0,
+                        help="SurvRNC contrast temperature (used when --lambda-rnc > 0).")
 
     # Model
     parser.add_argument("--input-dim", type=int, default=1024,
@@ -322,12 +340,24 @@ def main():
         model, name=args.optimizer, lr=args.lr, weight_decay=args.weight_decay
     )
 
+    # Pure Cox by default; add the SurvRNC representation term when asked.
+    if args.lambda_rnc > 0.0:
+        loss_fn = partial(
+            survrnc_cox_loss,
+            lambda_rnc=args.lambda_rnc,
+            temperature=args.temperature,
+        )
+        print(f"Loss: Cox + {args.lambda_rnc} * SurvRNC (T={args.temperature})")
+    else:
+        loss_fn = cox_loss_step
+        print("Loss: Cox")
+
     train(
         model,
         train_loader,
         val_loader,
         optimizer,
-        loss_fn=cox_loss,
+        loss_fn=loss_fn,
         epochs=args.epochs,
         device=device,
         early_stopping_patience=args.early_stopping_patience,

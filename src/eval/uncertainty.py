@@ -1,10 +1,11 @@
 # Uncertainty estimation for slide-level survival risk.
 #
-# Two predictive-uncertainty estimators that extend predict()'s per-slide frame
+# Three predictive-uncertainty estimators that extend predict()'s per-slide frame
 # with a risk_std column:
 #   * mc_dropout_predict - stochastic forward passes through one trained model
 #   * deep_ensemble_predict - spread across independently trained models
-# Both keep the raw Cox risk scale, so risk_mean plugs straight into the same
+#   * sngp_predict - Gaussian-process posterior variance from one SNGP model
+# All keep the raw Cox risk scale, so risk_mean plugs straight into the same
 # C-index / Kaplan-Meier / calibration reporting as a point prediction, and
 # risk_std is the accompanying uncertainty.
 
@@ -96,3 +97,71 @@ def deep_ensemble_predict(models, loader, device="auto"):
     out["risk_mean"] = risks.mean(axis=0)
     out["risk_std"] = risks.std(axis=0, ddof=1)
     return out[["case_id", "slide_id", "risk_mean", "risk_std", "time", "event"]]
+
+
+@torch.no_grad()
+def fit_sngp_covariance(model, loader, device="auto"):
+    """
+    Fit an SNGP model's GP covariance with one pass over the training loader.
+
+    Run this once, after train() and before sngp_predict(): it resets the GP
+    head's Laplace precision, accumulates the random-feature outer products over
+    the given loader (use the *training* loader -- the covariance describes where
+    the training data lives), then inverts the precision to the covariance. The
+    model is modified in place and returned for convenience.
+    """
+    device = pick_device(device)
+    model.to(device)
+    model.eval()  # deterministic spectral norm + dropout off during the fit
+
+    head = model.risk_head
+    head.reset_precision()
+    for batch in loader:
+        features = batch["features"].to(device)
+        mask = batch["mask"].to(device)
+        embedding = model.encoder(features, mask=mask)
+        head.update_precision(embedding)
+    head.compute_covariance()
+    return model
+
+
+@torch.no_grad()
+def sngp_predict(model, loader, device="auto"):
+    """
+    SNGP risk with predictive uncertainty from the GP posterior variance.
+
+    Single deterministic forward pass per slide: no sampling and no ensemble.
+    Requires the covariance to be fit first (see fit_sngp_covariance). Returns a
+    DataFrame with columns: case_id, slide_id, risk_mean, risk_std, time, event,
+    where risk_std is the square root of the GP posterior variance.
+    """
+    device = pick_device(device)
+    model.to(device)
+    model.eval()
+
+    records = []
+    for batch in loader:
+        features = batch["features"].to(device)
+        mask = batch["mask"].to(device)
+
+        risk, variance = model(features, mask=mask, return_variance=True)
+        risk_mean = risk.cpu().numpy().reshape(-1)
+        risk_std = variance.clamp_min(0.0).sqrt().cpu().numpy().reshape(-1)
+
+        time = batch["time"].numpy().reshape(-1)
+        event = batch["event"].numpy().reshape(-1)
+        for i in range(len(risk_mean)):
+            records.append(
+                {
+                    "case_id": batch["case_id"][i],
+                    "slide_id": batch["slide_id"][i],
+                    "risk_mean": float(risk_mean[i]),
+                    "risk_std": float(risk_std[i]),
+                    "time": float(time[i]),
+                    "event": int(event[i]),
+                }
+            )
+    return pd.DataFrame.from_records(
+        records,
+        columns=["case_id", "slide_id", "risk_mean", "risk_std", "time", "event"],
+    )

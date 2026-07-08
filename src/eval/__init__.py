@@ -12,6 +12,8 @@ from .evaluate import (
 from .uncertainty import (
     mc_dropout_predict,
     deep_ensemble_predict,
+    fit_sngp_covariance,
+    sngp_predict,
 )
 
 __all__ = [
@@ -26,4 +28,6 @@ __all__ = [
 
     "mc_dropout_predict",
     "deep_ensemble_predict",
+    "fit_sngp_covariance",
+    "sngp_predict",
 ]

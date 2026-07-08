@@ -4,7 +4,7 @@
 #   build_model / build_optimizer                                    (model)
 #   train                                                            (training)
 #   predict / evaluate                                               (prediction & evaluation)
-#   mc_dropout_predict / deep_ensemble_predict                       (uncertainty)
+#   mc_dropout_predict / deep_ensemble_predict / sngp_predict        (uncertainty)
 
 from .data import (
     make_survival_metadata,
@@ -20,9 +20,13 @@ from .data import (
 from .models import (
     ABMILSurvival,
     build_model,
+    SNGPABMILSurvival,
+    build_sngp_model,
 )
 from .losses import (
     cox_loss,
+    survrnc_loss,
+    survrnc_cox_loss,
 )
 from .train import (
     build_optimizer,
@@ -37,6 +41,8 @@ from .eval import (
     bootstrap_cindex,
     mc_dropout_predict,
     deep_ensemble_predict,
+    fit_sngp_covariance,
+    sngp_predict,
 )
 from .utils import (
     seed_everything,
@@ -62,10 +68,14 @@ __all__ = [
     # model construction
     "ABMILSurvival",
     "build_model",
+    "SNGPABMILSurvival",
+    "build_sngp_model",
     "build_optimizer",
 
     # loss
     "cox_loss",
+    "survrnc_loss",
+    "survrnc_cox_loss",
 
     # training
     "train",
@@ -81,6 +91,8 @@ __all__ = [
     # uncertainty estimation
     "mc_dropout_predict",
     "deep_ensemble_predict",
+    "fit_sngp_covariance",
+    "sngp_predict",
 
     # utilities
     "seed_everything",
