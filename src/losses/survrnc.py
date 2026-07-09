@@ -90,10 +90,20 @@ def survrnc_loss(embeddings, time, event, *, temperature=2.0, lambda_uncertain=0
         # Any sample with a real, known gap can act as a positive. For each such
         # p, the certain negatives are the certain samples strictly farther from
         # the anchor than p (paper's S_{a,p} intersected with the certain set).
+        # The positive itself must also enter the denominator with unit weight;
+        # otherwise the implied probability can exceed one and the loss can be
+        # negative. An uncertain positive is already present in uncertain_term
+        # with lambda weight, so add only its missing (1 - lambda) share.
         pos_idx = valid.nonzero(as_tuple=True)[0]                     # [P]
         farther = absd_a[None, :] > absd_a[pos_idx][:, None]          # [P, N]
         cert_mask = (farther & certain_a[None, :]).to(exp_a.dtype)    # [P, N]
-        denom = cert_mask @ exp_a + uncertain_term                   # [P]
+        pos_exp = exp_a[pos_idx]
+        pos_uncertain = uncertain_a[pos_idx].to(exp_a.dtype)
+        denom = (
+            cert_mask @ exp_a
+            + uncertain_term
+            + pos_exp * (1.0 - lambda_uncertain * pos_uncertain)
+        )                                                             # [P]
 
         keep = denom > 0                        # positives that have a negative
         if not keep.any():
