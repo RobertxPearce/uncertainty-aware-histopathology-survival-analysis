@@ -8,6 +8,22 @@ import torch
 import torch.nn as nn
 
 
+def _build_patch_proj(input_dim, embed_dim, hidden_dims, dropout, linear):
+    """
+    Stack of linear -> ReLU -> dropout blocks mapping input_dim to embed_dim.
+
+    hidden_dims=None reproduces the original single block, state_dict keys
+    included, so existing checkpoints keep loading. Passing intermediate widths
+    (e.g. [768, 384]) steps a wide patch embedding down gradually rather than
+    collapsing it in one matmul.
+    """
+    dims = [input_dim, *(hidden_dims or []), embed_dim]
+    layers = []
+    for in_dim, out_dim in zip(dims[:-1], dims[1:]):
+        layers += [linear(in_dim, out_dim), nn.ReLU(), nn.Dropout(dropout)]
+    return nn.Sequential(*layers)
+
+
 class ABMILEncoder(nn.Module):
     def __init__(
         self,
@@ -16,20 +32,26 @@ class ABMILEncoder(nn.Module):
         attention_dim=256,
         dropout=0.25,
         gated=True,
+        hidden_dims=None,
+        input_norm=False,
+        pool_norm=True,
         linear=nn.Linear,
     ):
         super().__init__()
 
         self.gated = gated
 
+        # LayerNorm over the raw patch features, before any projection. Foundation
+        # encoders emit unnormalised embeddings whose per-dimension scales vary a
+        # lot; normalising first stops a few loud dimensions from dominating the
+        # projection. Off by default so existing checkpoints keep loading.
+        self.input_norm = nn.LayerNorm(input_dim) if input_norm else nn.Identity()
+
         # linear is the layer factory for the encoder's linear maps. It
         # defaults to nn.Linear; SNGP passes a spectral-normalised variant so the
-        # feature extractor stays distance-aware (see src/models/sngp.py).
-        self.patch_proj = nn.Sequential(
-            linear(input_dim, embed_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
+        # feature extractor stays distance-aware (see src/models/sngp.py). Every
+        # projection block goes through it, so added depth stays bi-Lipschitz.
+        self.patch_proj = _build_patch_proj(input_dim, embed_dim, hidden_dims, dropout, linear)
 
         self.attention_v = linear(embed_dim, attention_dim)
         if gated:
@@ -38,7 +60,8 @@ class ABMILEncoder(nn.Module):
             self.attention_u = None
         self.attention_w = linear(attention_dim, 1)
 
-        self.norm = nn.LayerNorm(embed_dim)
+        # Applied to the pooled bag vector, not to patches.
+        self.norm = nn.LayerNorm(embed_dim) if pool_norm else nn.Identity()
 
     def forward(self, x, mask=None, return_attention=False):
         """
@@ -66,7 +89,7 @@ class ABMILEncoder(nn.Module):
                 raise ValueError("ABMILEncoder received a bag with no unmasked patches.")
 
         # [B, N, D] -> [B, N, embed_dim]
-        h = self.patch_proj(x)
+        h = self.patch_proj(self.input_norm(x))
 
         # Ilse et al. gated attention: w^T(tanh(Vh) * sigmoid(Uh)).
         attention_features = torch.tanh(self.attention_v(h))
@@ -98,6 +121,10 @@ class ABMILSurvival(nn.Module):
         attention_dim=256,
         dropout=0.25,
         gated=True,
+        hidden_dims=None,
+        input_norm=False,
+        pool_norm=True,
+        risk_hidden_dim=None,
     ):
         super().__init__()
 
@@ -107,8 +134,23 @@ class ABMILSurvival(nn.Module):
             attention_dim=attention_dim,
             dropout=dropout,
             gated=gated,
+            hidden_dims=hidden_dims,
+            input_norm=input_norm,
+            pool_norm=pool_norm,
         )
-        self.risk_head = nn.Linear(embed_dim, 1)
+
+        # risk_hidden_dim=None keeps the plain linear Cox head. Giving it a width
+        # inserts one hidden layer, which also puts a Dropout after pooling --
+        # the only stochastic layer MC dropout sees on the bag vector itself.
+        if risk_hidden_dim is None:
+            self.risk_head = nn.Linear(embed_dim, 1)
+        else:
+            self.risk_head = nn.Sequential(
+                nn.Linear(embed_dim, risk_hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(risk_hidden_dim, 1),
+            )
 
     def forward(self, x, mask=None, return_attention=False, return_embedding=False):
         """
@@ -141,7 +183,17 @@ class ABMILSurvival(nn.Module):
         return risk
 
 
-def build_model(input_dim=1024, embed_dim=512, attention_dim=256, dropout=0.25, gated=True):
+def build_model(
+    input_dim=1024,
+    embed_dim=512,
+    attention_dim=256,
+    dropout=0.25,
+    gated=True,
+    hidden_dims=None,
+    input_norm=False,
+    pool_norm=True,
+    risk_hidden_dim=None,
+):
     """
     Construct the ABMIL encoder + Cox risk head.
 
@@ -155,4 +207,8 @@ def build_model(input_dim=1024, embed_dim=512, attention_dim=256, dropout=0.25, 
         attention_dim=attention_dim,
         dropout=dropout,
         gated=gated,
+        hidden_dims=hidden_dims,
+        input_norm=input_norm,
+        pool_norm=pool_norm,
+        risk_hidden_dim=risk_hidden_dim,
     )

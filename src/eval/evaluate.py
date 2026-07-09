@@ -50,6 +50,10 @@ def _model_kwargs_from_config(config):
         attention_dim=config.get("attention_dim", 256),
         dropout=config.get("dropout", 0.25),
         gated=config.get("gated", config.get("gated_attention", True)),
+        hidden_dims=config.get("hidden_dims"),
+        input_norm=config.get("input_norm", False),
+        pool_norm=config.get("pool_norm", True),
+        risk_hidden_dim=config.get("risk_hidden_dim"),
     )
 
 
