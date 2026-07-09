@@ -57,6 +57,9 @@ from src import (
     pick_device,
 )
 
+# np.trapz was removed in NumPy 2.0 (renamed to np.trapezoid); support both.
+_trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+
 
 # ----------------------------------------------------------------------
 # Configurations
@@ -199,7 +202,7 @@ def score(pred_df):
     # Area under the selective-prediction curve: a single "is the uncertainty
     # useful?" number (mean C-index as the most-uncertain slides are dropped).
     cov, cidx = _selective_curve(pred_df)
-    sel_auc = float(np.trapz(cidx, cov) / (cov[-1] - cov[0])) if len(cov) > 1 else float("nan")
+    sel_auc = float(_trapz(cidx, cov) / (cov[-1] - cov[0])) if len(cov) > 1 else float("nan")
     return {
         "c_index": point,
         "ci_low": lo,
@@ -334,7 +337,7 @@ def plot_selective_prediction(predictions, out_path):
     fig, ax = plt.subplots(figsize=(5.8, 4.0))
     for m in predictions:
         cov, cidx = _selective_curve(predictions[m])
-        auc = np.trapz(cidx, cov) / (cov[-1] - cov[0]) if len(cov) > 1 else float("nan")
+        auc = _trapz(cidx, cov) / (cov[-1] - cov[0]) if len(cov) > 1 else float("nan")
         ax.plot(cov, cidx, marker="o", markersize=4, linewidth=1.8,
                 color=METHOD_COLORS[m], label=f"{METHOD_LABELS[m]} (area {auc:.3f})")
 
