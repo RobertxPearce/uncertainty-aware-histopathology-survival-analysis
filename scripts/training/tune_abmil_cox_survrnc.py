@@ -81,11 +81,6 @@ MODEL_CONFIG = {
 
 # Named architectures, each a set of overrides on MODEL_CONFIG. Names become part
 # of the trial directory name.
-#
-# "baseline" is the tuned configuration this project has been training. "wide" is
-# the partner's shape (LayerNorm on the raw features, a single wide projection,
-# no pooled norm, an MLP Cox head). The two in between change one thing at a time
-# so a win can be attributed rather than guessed at.
 ARCHITECTURES = {
     "baseline": dict(embed_dim=128, attention_dim=128),
     "baseline_input_norm": dict(embed_dim=128, attention_dim=128, input_norm=True),
