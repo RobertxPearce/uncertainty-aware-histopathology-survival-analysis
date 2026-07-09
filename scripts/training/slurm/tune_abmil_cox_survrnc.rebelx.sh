@@ -39,6 +39,4 @@ conda activate survivors
 echo "Running on $(hostname), CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 echo "Starting focused ABMIL Cox + SurvRNC tuning"
 
-srun --unbuffered python scripts/training/tune_abmil_cox_survrnc.py \
-    --device cuda \
-    --num-workers 4
+srun --unbuffered python scripts/training/tune_abmil_cox_survrnc.py
