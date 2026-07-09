@@ -249,7 +249,7 @@ def attach_feature_paths(
     return metadata
 
 
-def load_survival_table(csv_path, project_root=PROJECT_ROOT):
+def load_survival_table(csv_path, project_root=PROJECT_ROOT, quiet=False):
     """
     Read a per-slide survival table CSV, resolving relative feature paths to
     absolute against project_root. Returns a DataFrame ready for make_datasets.
@@ -257,11 +257,28 @@ def load_survival_table(csv_path, project_root=PROJECT_ROOT):
     This is the one place feature-path resolution lives: downstream stages
     (make_datasets / make_dataloaders) receive a table with absolute paths and
     never touch project_root themselves.
+
+    Rows with non-positive follow-up are dropped. Cox's partial likelihood is
+    defined over positive survival times: a case observed for zero days
+    contributes no risk set, and if it is also an event it enters every other
+    case's risk set at t=0. TCGA leaves a handful of these in the clinical
+    supplement.
     """
     csv_path = Path(csv_path)
     if not csv_path.is_file():
         raise FileNotFoundError(f"Survival metadata CSV not found: {csv_path}")
     df = pd.read_csv(csv_path)
+
+    invalid = df["time"] <= 0
+    if invalid.any():
+        if not quiet:
+            dropped = df.loc[invalid, "case_id"].unique()
+            print(
+                f"load_survival_table: dropping {int(invalid.sum())} slide(s) from "
+                f"{len(dropped)} case(s) with time <= 0: {', '.join(map(str, dropped))}"
+            )
+        df = df.loc[~invalid].reset_index(drop=True)
+
     project_root = Path(project_root)
     df["feature_path"] = df["feature_path"].map(
         lambda p: str(Path(p) if Path(p).is_absolute() else project_root / p)
