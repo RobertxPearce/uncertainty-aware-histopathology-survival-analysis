@@ -56,25 +56,53 @@ DEVICE = "cuda"
 SEED = 42
 NUM_WORKERS = 4
 
+# Every (architecture, hyperparameter) trial is repeated once per seed and ranked
+# on the mean. A single seed cannot separate these architectures: the validation
+# split holds 92 patients / 33 events, on which one run's patient C-index has a
+# standard deviation near 0.04, so the best of several single-seed trials is
+# inflated by roughly that much even when the architectures are equally good.
+SEEDS = [42, 43, 44, 45]
+
 # Data loading
 FEATURE_KEY = "features"
 MAX_PATCHES = 1024
 TRAIN_BATCH_SIZE = 96
-# Validation bags are uncapped, so this must remain much smaller than training.
-EVAL_BATCH_SIZE = 8
+# Validation bags are uncapped and large (median ~15k patches, max ~42k), and
+# collate_bags pads to the longest bag in the batch. Architectures with
+# input_norm or a wide embed_dim hold several full-size [B, N, 1536] tensors at
+# once, so this must remain much smaller than training.
+EVAL_BATCH_SIZE = 4
 
-# Fixed model settings
+# Model settings shared by every architecture below.
 MODEL_CONFIG = {
     "input_dim": 1536,
-    "embed_dim": 128,
-    "attention_dim": 128,
     "gated": True,
 }
 
-# Values whose Cartesian product will be tuned.
+# Named architectures, each a set of overrides on MODEL_CONFIG. Names become part
+# of the trial directory name.
+#
+# "baseline" is the tuned configuration this project has been training. "wide" is
+# the partner's shape (LayerNorm on the raw features, a single wide projection,
+# no pooled norm, an MLP Cox head). The two in between change one thing at a time
+# so a win can be attributed rather than guessed at.
+ARCHITECTURES = {
+    "baseline": dict(embed_dim=128, attention_dim=128),
+    "baseline_input_norm": dict(embed_dim=128, attention_dim=128, input_norm=True),
+    "deep_proj": dict(embed_dim=128, attention_dim=128, input_norm=True, hidden_dims=[512, 256]),
+    "wide": dict(
+        embed_dim=512,
+        attention_dim=256,
+        input_norm=True,
+        pool_norm=False,
+        risk_hidden_dim=256,
+    ),
+}
+
+# Values whose Cartesian product will be tuned, alongside ARCHITECTURES.
 TUNING_GRID = {
-    "dropout": [0.25, 0.40],
-    "lambda_rnc": [0.0, 0.01, 0.05, 0.10],
+    "dropout": [0.25],
+    "lambda_rnc": [0.05],
 }
 
 # Optimization and loss
@@ -142,12 +170,14 @@ def main():
         "run_dir": str(RUN_DIR),
         "device": str(device),
         "seed": SEED,
+        "seeds": SEEDS,
         "num_workers": NUM_WORKERS,
         "feature_key": FEATURE_KEY,
         "max_patches": MAX_PATCHES,
         "train_batch_size": TRAIN_BATCH_SIZE,
         "eval_batch_size": EVAL_BATCH_SIZE,
         "model_config": MODEL_CONFIG,
+        "architectures": ARCHITECTURES,
         "tuning_grid": TUNING_GRID,
         "optimizer": OPTIMIZER,
         "learning_rate": LEARNING_RATE,
@@ -160,25 +190,41 @@ def main():
     with open(RUN_DIR / "tuning_config.json", "w") as handle:
         json.dump(settings, handle, indent=2, sort_keys=True)
 
-    trials = list(product(TUNING_GRID["dropout"], TUNING_GRID["lambda_rnc"]))
+    grid_keys = list(TUNING_GRID)
+    trials = [
+        (arch_name, dict(zip(grid_keys, values)), trial_seed)
+        for arch_name, values, trial_seed in product(
+            ARCHITECTURES, product(*TUNING_GRID.values()), SEEDS
+        )
+    ]
     print(f"Device: {device}")
-    print(f"Trials: {len(trials)} (test split will not be evaluated)")
+    print(
+        f"Trials: {len(trials)} "
+        f"({len(trials) // len(SEEDS)} configs x {len(SEEDS)} seeds; "
+        "test split will not be evaluated)"
+    )
 
     rows = []
-    for trial_index, (dropout, lambda_rnc) in enumerate(trials):
-        # Hold initialization, shuffling, and patch sampling constant so differences
-        # between trials come from the hyperparameters rather than seed variance.
-        trial_seed = SEED
+    for trial_index, (arch_name, params, trial_seed) in enumerate(trials):
+        dropout = params["dropout"]
+        lambda_rnc = params["lambda_rnc"]
+
+        # The seed drives weight init, batch shuffling, and train-split patch
+        # sampling, so repeating a config across SEEDS measures exactly the run
+        # variance that would otherwise be mistaken for an architecture effect.
         seed_everything(trial_seed)
-        trial_name = f"dropout_{dropout:g}__lambda_rnc_{lambda_rnc:g}"
+        config_name = f"{arch_name}__dropout_{dropout:g}__lambda_rnc_{lambda_rnc:g}"
+        trial_name = f"{config_name}__seed_{trial_seed}"
         trial_dir = RUN_DIR / trial_name
 
         train_loader, val_loader, _ = make_loaders(table, trial_seed)
         model_config = {
             **MODEL_CONFIG,
+            **ARCHITECTURES[arch_name],
             "dropout": dropout,
         }
         model = build_model(**model_config)
+        n_params = sum(p.numel() for p in model.parameters())
         optimizer = build_optimizer(
             model,
             name=OPTIMIZER,
@@ -195,7 +241,7 @@ def main():
             )
         )
 
-        print(f"\n[{trial_index + 1}/{len(trials)}] {trial_name}")
+        print(f"\n[{trial_index + 1}/{len(trials)}] {trial_name} ({n_params:,} params)")
         history = train(
             model,
             train_loader,
@@ -218,8 +264,11 @@ def main():
 
         row = {
             "trial": trial_name,
+            "config": config_name,
+            "architecture": arch_name,
             "dropout": dropout,
             "lambda_rnc": lambda_rnc,
+            "params": n_params,
             "seed": trial_seed,
             "best_epoch": history["best_epoch"],
             "slide_val_cindex": history["best_cindex"],
@@ -227,18 +276,62 @@ def main():
             "checkpoint": str(trial_dir / "best.pt"),
         }
         rows.append(row)
-        pd.DataFrame(rows).sort_values(
-            "patient_val_cindex", ascending=False, na_position="last"
-        ).to_csv(RUN_DIR / "tuning_summary.csv", index=False)
+        pd.DataFrame(rows).to_csv(RUN_DIR / "tuning_trials.csv", index=False)
         print(f"Patient-level val C-index: {patient_cindex:.4f}")
 
-    summary = pd.DataFrame(rows).sort_values(
-        "patient_val_cindex", ascending=False, na_position="last"
+    trials_frame = pd.DataFrame(rows)
+
+    # Rank configs by the mean across seeds, never by a single run. std is the
+    # seed noise; a gap between two configs smaller than it means nothing.
+    summary = (
+        trials_frame.groupby(["config", "architecture", "dropout", "lambda_rnc", "params"])
+        .agg(
+            mean_val_cindex=("patient_val_cindex", "mean"),
+            std_val_cindex=("patient_val_cindex", "std"),
+            min_val_cindex=("patient_val_cindex", "min"),
+            max_val_cindex=("patient_val_cindex", "max"),
+            seeds=("seed", "count"),
+        )
+        .reset_index()
+        .sort_values("mean_val_cindex", ascending=False, na_position="last")
     )
+    summary.to_csv(RUN_DIR / "tuning_summary.csv", index=False)
+
     best = summary.iloc[0]
     print("\nTuning complete")
-    print(summary[["trial", "best_epoch", "patient_val_cindex"]].to_string(index=False))
-    print(f"\nBest checkpoint: {best['checkpoint']}")
+    print(
+        summary[
+            ["architecture", "dropout", "lambda_rnc", "params", "seeds",
+             "mean_val_cindex", "std_val_cindex", "min_val_cindex", "max_val_cindex"]
+        ].to_string(index=False)
+    )
+    print("\nMean patient-level val C-index per architecture (across seeds):")
+    print(
+        trials_frame.groupby("architecture")["patient_val_cindex"]
+        .agg(["mean", "std"])
+        .sort_values("mean", ascending=False)
+        .to_string()
+    )
+
+    # A gap smaller than the seed noise is not a result. Say so rather than
+    # letting the ordering of the table imply a winner.
+    if len(summary) > 1:
+        gap = best["mean_val_cindex"] - summary.iloc[1]["mean_val_cindex"]
+        noise = trials_frame["patient_val_cindex"].std()
+        print(f"\nTop-two gap: {gap:.4f} | seed noise (std over all trials): {noise:.4f}")
+        if gap < noise:
+            print(
+                "The top two configs are within seed noise of each other. Treat this "
+                "as 'no architecture separated', not as a winner."
+            )
+
+    best_trials = trials_frame[trials_frame["config"] == best["config"]]
+    best_seed = best_trials.loc[best_trials["patient_val_cindex"].idxmax()]
+    print(
+        f"\nBest config: {best['config']} "
+        f"({best['mean_val_cindex']:.4f} +/- {best['std_val_cindex']:.4f} over {int(best['seeds'])} seeds)"
+    )
+    print(f"Best single checkpoint from it: {best_seed['checkpoint']} (seed {best_seed['seed']})")
     print("Keep the test split untouched until the tuning decision is final.")
 
 
