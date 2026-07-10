@@ -14,13 +14,18 @@ selection may be noisy it is one seed on a small val split -- and that is
 fine: a noisy-but-honest selector still yields an unbiased outer estimate,
 because the noise is part of what is being measured.
 
-What the inner grid sweeps: SurvRNC strength (lambda_rnc). Every candidate is
-Cox + SurvRNC -- the grid does not include 0. Two earlier nested sweeps closed
-off the other knobs: a 4-architecture x 4-seed screen moved the mean C-index by
-0.018 against seed noise of 0.028, and a batch-size sweep over {16, 32, 96}
-moved the inner val by 0.008. Loss weighting is the remaining untested lever --
-the tuning grid never went above lambda_rnc=0.10, while the reference partner
-implementation used 0.5. Batch size is fixed at 32; architecture at the baseline.
+What the inner grid sweeps: three loss/attention knobs left open after batch
+size and architecture came back flat (a 4-architecture x 4-seed screen moved the
+mean C-index by 0.018 against seed noise 0.028; a batch-size sweep over
+{16, 32, 96} moved the inner val by 0.008):
+  - lambda_rnc          SurvRNC strength; 0.0 is pure Cox, currently the best
+                        result (Cox-only outer 0.591 vs Cox+SurvRNC 0.561).
+  - temperature         attention sharpness; 0.05 sharpens, 1.0 is standard.
+  - survrnc_temperature SurvRNC contrastive temperature; 0.1 vs 2.0.
+The 0.05 attention temperature and 0.1 SurvRNC temperature are the partner
+implementation's settings (it scored higher on a different data pipeline); this
+grid ports those knobs into the honest nested-CV harness to see which actually
+help here. Batch size is fixed at 32; architecture at the baseline.
 
 Example:
     python scripts/training/cross_validate_abmil_cox_survrnc.py
@@ -106,26 +111,51 @@ TRAIN_BATCH_SIZE = 32
 EVAL_BATCH_SIZE = 4
 
 # Fixed model settings. The architecture screen found no separation between
-# baseline / input_norm / deep_proj / wide, so the smallest is kept.
+# baseline / input_norm / deep_proj / wide, so the smallest is kept. Attention
+# `temperature` is NOT set here -- it is swept per candidate in the inner grid.
 MODEL_CONFIG = {
     "input_dim": 1536,
     "embed_dim": 128,
     "attention_dim": 128,
     "gated": True,
     "dropout": 0.25,
-    "temperature": 0.05,   # <-- sharpen attention (baked into training)
 }
 
-# Inner grid: selected inside each outer fold, on that fold's val patients only.
-# This sweeps SurvRNC strength (lambda_rnc = the paper's beta). Every value is
-# > 0, so every candidate is Cox + SurvRNC, never pure Cox. The old tuning grid
-# never went above 0.10; 0.5 matches the partner's setting. batch size, having
-# been shown irrelevant, is now fixed and no longer swept.
-INNER_GRID = {
-    "lambda_rnc": [0.05, 0.1, 0.5],
-}
+# Inner grid: every candidate is trained on the fold's train patients and the
+# winner is chosen on its val patients. Sweeps lambda_rnc x temperature x
+# survrnc_temperature (see module docstring). When lambda_rnc == 0 there is no
+# SurvRNC term, so its temperature is irrelevant and those redundant
+# combinations are dropped (survrnc_temperature = None).
+#
+# Other partner-vs-ours differences are confounded in the partner's reported
+# gain (no patch cap, wider projector, no dropout, weight_decay 1e-4); they are
+# held fixed here to keep the grid readable and can be added as further knobs.
+def _inner_grid():
+    grid = []
+    for lambda_rnc in (0.0, 0.1, 0.5):
+        for temperature in (1.0, 0.05):
+            survrnc_temps = (None,) if lambda_rnc == 0 else (0.1, 2.0)
+            for survrnc_temperature in survrnc_temps:
+                grid.append({
+                    "lambda_rnc": lambda_rnc,
+                    "temperature": temperature,
+                    "survrnc_temperature": survrnc_temperature,
+                })
+    return grid
 
-# Optimization and loss
+
+INNER_GRID = _inner_grid()
+
+
+def config_label(candidate):
+    """Short stable id for a grid candidate, used in logs and result tables."""
+    label = f"rnc{candidate['lambda_rnc']:g}_T{candidate['temperature']:g}"
+    if candidate["survrnc_temperature"] is not None:
+        label += f"_st{candidate['survrnc_temperature']:g}"
+    return label
+
+
+# Optimization
 OPTIMIZER = "adamw"
 LEARNING_RATE = 5e-5
 WEIGHT_DECAY = 1e-3
@@ -135,17 +165,16 @@ EARLY_STOPPING_PATIENCE = 5
 # win: in the architecture screen one run's best epoch was 1, four gradient steps.
 MIN_EPOCHS = 3
 GRAD_CLIP = 1.0
-SURVRNC_TEMPERATURE = 2.0
 
 
-def make_loss_fn(lambda_rnc):
+def make_loss_fn(lambda_rnc, survrnc_temperature):
     """Cox + lambda_rnc * SurvRNC, or plain Cox when lambda_rnc == 0."""
     if lambda_rnc == 0:
         return cox_loss_step
     return partial(
         survrnc_cox_loss,
         lambda_rnc=lambda_rnc,
-        temperature=SURVRNC_TEMPERATURE,
+        temperature=survrnc_temperature,
     )
 
 
@@ -212,29 +241,32 @@ def patient_cindex_on(model, loader, device):
 
 def select_inner_config(fold_table, fold_dir, device):
     """
-    Train the inner grid on this fold's train patients, pick on its val patients.
+    Train every inner-grid candidate on this fold's train patients, pick on val.
 
-    Sweeps SurvRNC strength (INNER_GRID["lambda_rnc"]). Returns (best, rows). The
-    outer fold's test patients are never touched here -- that is the whole point
-    of nesting. `rows` records every candidate so the selection can be audited.
+    Sweeps the loss/attention grid (INNER_GRID). Returns (best, rows). The outer
+    fold's test patients are never touched here -- that is the whole point of
+    nesting. `rows` records every candidate so the selection can be audited.
     """
     best = None
     rows = []
-    for lambda_rnc in INNER_GRID["lambda_rnc"]:
+    for candidate in INNER_GRID:
+        label = config_label(candidate)
+        lambda_rnc = candidate["lambda_rnc"]
         # Reseed and rebuild the loaders per candidate so weight init and data
-        # order are identical across the grid; only lambda_rnc differs.
+        # order are identical across the grid; only the swept knobs differ.
         seed_everything(SEED)
-        candidate_dir = fold_dir / f"inner_lambda_{lambda_rnc:g}"
+        candidate_dir = fold_dir / f"inner_{label}"
 
         train_loader, val_loader, test_loader = make_fold_loaders(fold_table, SEED)
-        model = build_model(**MODEL_CONFIG)
+        model_config = {**MODEL_CONFIG, "temperature": candidate["temperature"]}
+        model = build_model(**model_config)
         optimizer = build_optimizer(
             model, name=OPTIMIZER, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
         )
-        loss_fn = make_loss_fn(lambda_rnc)
+        loss_fn = make_loss_fn(lambda_rnc, candidate["survrnc_temperature"])
 
         steps_per_epoch = len(train_loader)
-        print(f"  inner: lambda_rnc={lambda_rnc:g} ({steps_per_epoch} steps/epoch)")
+        print(f"  inner: {label} ({steps_per_epoch} steps/epoch)")
         history = train(
             model,
             train_loader,
@@ -246,7 +278,7 @@ def select_inner_config(fold_table, fold_dir, device):
             early_stopping_patience=EARLY_STOPPING_PATIENCE,
             min_epochs=MIN_EPOCHS,
             checkpoint_dir=candidate_dir,
-            model_config=MODEL_CONFIG,
+            model_config=model_config,
             grad_clip=GRAD_CLIP,
             verbose=False,
         )
@@ -262,7 +294,10 @@ def select_inner_config(fold_table, fold_dir, device):
         )
 
         rows.append({
+            "config": label,
             "lambda_rnc": lambda_rnc,
+            "temperature": candidate["temperature"],
+            "survrnc_temperature": candidate["survrnc_temperature"],
             "steps_per_epoch": steps_per_epoch,
             "best_epoch": history["best_epoch"],
             "total_steps": history["best_epoch"] * steps_per_epoch,
@@ -274,7 +309,8 @@ def select_inner_config(fold_table, fold_dir, device):
         if best is None or val_cindex > best["val_cindex"]:
             best = {
                 "val_cindex": val_cindex,
-                "lambda_rnc": lambda_rnc,
+                "config": label,
+                "candidate": candidate,
                 "model": model,
                 "test_loader": test_loader,
                 "history": history,
@@ -312,13 +348,13 @@ def main():
         "early_stopping_patience": EARLY_STOPPING_PATIENCE,
         "min_epochs": MIN_EPOCHS,
         "grad_clip": GRAD_CLIP,
-        "survrnc_temperature": SURVRNC_TEMPERATURE,
     }
     with open(RUN_DIR / "cv_config.json", "w") as handle:
         json.dump(settings, handle, indent=2, sort_keys=True)
 
     print(f"Device: {device}")
-    print(f"Loss: Cox + SurvRNC, lambda_rnc swept over {INNER_GRID['lambda_rnc']}")
+    print(f"Inner grid: {len(INNER_GRID)} candidates over "
+          f"lambda_rnc x temperature x survrnc_temperature")
     print(f"{N_SPLITS}-fold CV over the full cohort (every patient held out once)")
 
     fold_rows = []
@@ -334,13 +370,13 @@ def main():
         best, candidate_rows = select_inner_config(fold_table, fold_dir, device)
         for row in candidate_rows:
             row["fold"] = fold_index
-            row["selected"] = row["lambda_rnc"] == best["lambda_rnc"]
+            row["selected"] = row["config"] == best["config"]
         inner_rows.extend(candidate_rows)
 
         model = best["model"]
         test_loader = best["test_loader"]
         history = best["history"]
-        print(f"  selected lambda_rnc={best['lambda_rnc']:g}")
+        print(f"  selected config: {best['config']}")
 
         # Score the held-out fold -- data this model never saw or selected on.
         test_predictions = predict(model, test_loader, device)
@@ -364,7 +400,10 @@ def main():
         fold_rows.append(
             {
                 "fold": fold_index,
-                "selected_lambda_rnc": best["lambda_rnc"],
+                "selected_config": best["config"],
+                "selected_lambda_rnc": best["candidate"]["lambda_rnc"],
+                "selected_temperature": best["candidate"]["temperature"],
+                "selected_survrnc_temperature": best["candidate"]["survrnc_temperature"],
                 "inner_val_patient_cindex": best["val_cindex"],
                 "best_epoch": history["best_epoch"],
                 "n_test_patients": len(patient_predictions),
@@ -405,8 +444,7 @@ def main():
         "experiment": EXPERIMENT_NAME,
         "n_splits": N_SPLITS,
         "inner_grid": INNER_GRID,
-        "selected_lambda_rnc_per_fold":
-            fold_summary["selected_lambda_rnc"].tolist(),
+        "selected_config_per_fold": fold_summary["selected_config"].tolist(),
         "n_patients_total": int(pooled["case_id"].nunique()),
         "n_events_total": int(pooled["event"].sum()),
         "patient_cindex_mean": patient_mean,
@@ -423,20 +461,21 @@ def main():
         json.dump(summary, handle, indent=2)
 
     print("\nNested cross-validation complete")
-    print(fold_summary[["fold", "selected_lambda_rnc", "best_epoch",
+    print(fold_summary[["fold", "selected_config", "best_epoch",
                         "n_test_patients", "n_test_events",
                         "inner_val_patient_cindex", "patient_test_cindex"]].to_string(index=False))
 
-    # Inner val C-index by SurvRNC strength, averaged over folds. This is what the
+    # Inner val C-index by candidate, averaged over folds. This is what the
     # selector saw; it does not license a claim about the held-out data, but if
-    # one lambda wins every fold that is worth knowing.
-    print("\nInner val C-index by lambda_rnc (mean over folds):")
+    # one config wins on most folds that is worth knowing.
+    print("\nInner val C-index by candidate (mean over folds, best first):")
     print(
-        inner_summary.groupby("lambda_rnc")
+        inner_summary.groupby("config")
         .agg(slide=("inner_val_slide_cindex", "mean"),
              patient=("inner_val_patient_cindex", "mean"),
              total_steps=("total_steps", "mean"),
              times_selected=("selected", "sum"))
+        .sort_values("patient", ascending=False)
         .to_string()
     )
     # If no candidate ever beats chance on the inner val, the selection below is
@@ -447,14 +486,14 @@ def main():
             "validation split. The models are not learning; the fold scores below "
             "describe noise, not a survival signal."
         )
-    chosen = fold_summary["selected_lambda_rnc"]
+    chosen = fold_summary["selected_config"]
     if chosen.nunique() == 1:
-        print(f"\nEvery fold selected lambda_rnc={chosen.iloc[0]:g}.")
+        print(f"\nEvery fold selected {chosen.iloc[0]}.")
     else:
         print(
-            f"\nFolds disagreed on lambda_rnc ({chosen.tolist()}). The outer "
+            f"\nFolds disagreed on the config ({chosen.tolist()}). The outer "
             "estimate below is still valid -- it measures the procedure, not one "
-            "config -- but no single SurvRNC strength is established as best."
+            "config -- but no single config is established as best."
         )
     print(f"\nPatient-level C-index: {patient_mean:.4f} +/- {patient_std:.4f} (mean +/- std over {N_SPLITS} folds)")
     print(f"Slide-level C-index:   {slide_mean:.4f} +/- {slide_std:.4f}")
