@@ -34,7 +34,7 @@
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
 #SBATCH --output=logs/abmil_survrnc_cv_%j.out
-#SBATCH --nodelist=gpu002
+# No --nodelist pin: let SLURM place the job on any free A30 in the partition.
 
 set -euo pipefail
 
@@ -48,6 +48,17 @@ source /home/"$USER"/miniconda3/bin/activate
 conda activate survivors
 
 echo "Running on $(hostname), CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
-echo "Starting nested 5-fold CV (inner grid: train_batch_size)"
+
+# Fail fast if SLURM placed us on a GPU another process is already filling.
+GPU_ID="${CUDA_VISIBLE_DEVICES%%,*}"
+GPU_FREE=$(nvidia-smi -i "${GPU_ID:-0}" --query-gpu=memory.free --format=csv,noheader,nounits)
+echo "Assigned GPU ${GPU_ID:-0}: ${GPU_FREE} MiB free"
+if [ "${GPU_FREE:-0}" -lt 8000 ]; then
+    echo "ERROR: assigned GPU has only ${GPU_FREE} MiB free -- another process is using it."
+    echo "Not starting. Resubmit to be scheduled onto a different card."
+    exit 1
+fi
+
+echo "Starting nested 5-fold CV (inner grid: lambda_rnc)"
 
 srun --unbuffered python scripts/training/cross_validate_abmil_cox_survrnc.py
