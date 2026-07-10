@@ -81,6 +81,88 @@ def assign_splits(
     return out
 
 
+def make_cv_folds(
+    metadata,
+    n_splits=5,
+    val_fraction=0.15,
+    seed=42,
+    group_col="case_id",
+    stratify_col="event",
+    split_col="split",
+):
+    """
+    Yield (fold_index, fold_table) for patient-level, event-stratified K-fold CV.
+
+    Each fold_table is a copy of `metadata` whose `split` column is set so that:
+        test  = the held-out fold (~1/n_splits of patients),
+        val   = val_fraction of the remaining patients (for early stopping),
+        train = everyone else.
+
+    Splitting is at the patient (group_col) level and stratified on stratify_col,
+    exactly like assign_splits: no patient spans two splits, and every fold keeps
+    a similar event rate. Across the n_splits folds each patient lands in `test`
+    exactly once, so concatenating the per-fold test predictions covers the whole
+    cohort once -- the point of moving to CV on a small dataset.
+
+    Because each fold_table carries the same train/val/test vocabulary as a frozen
+    split file, the rest of the pipeline (make_datasets -> make_dataloaders ->
+    train -> predict) runs per fold with no changes.
+
+    Yields lazily; wrap in list(...) if you need to iterate more than once.
+    """
+    if n_splits < 2:
+        raise ValueError("n_splits must be >= 2.")
+    if not 0 <= val_fraction < 1:
+        raise ValueError("val_fraction must be in [0, 1).")
+    for col in (group_col, stratify_col):
+        if col not in metadata.columns:
+            raise ValueError(f"metadata is missing required column: {col!r}")
+
+    # Collapse to one row per patient (event = 1 if any of their slides carries one),
+    # matching assign_splits so the two split routines partition consistently.
+    per_patient = metadata.groupby(group_col)[stratify_col].max().reset_index()
+    labels = sorted(per_patient[stratify_col].unique())
+
+    # Assign every patient an outer fold id (0..n_splits-1), stratified by class:
+    # shuffle each class and cut it into n_splits near-equal contiguous chunks.
+    rng = np.random.default_rng(seed)
+    fold_of_patient = {}
+    for label in labels:
+        patients = per_patient.loc[per_patient[stratify_col] == label, group_col].to_numpy()
+        rng.shuffle(patients)
+        for fold_id, chunk in enumerate(np.array_split(patients, n_splits)):
+            for p in chunk:
+                fold_of_patient[p] = fold_id
+    per_patient = per_patient.assign(_fold=per_patient[group_col].map(fold_of_patient))
+
+    for k in range(n_splits):
+        # Carve the inner val out of the non-test patients, per class so val stays
+        # stratified too. A per-fold RNG keeps the carve reproducible and
+        # independent of the outer-fold shuffle order.
+        val_rng = np.random.default_rng(seed + 1 + k)
+        split_of_patient = {}
+        for label in labels:
+            cls = per_patient[per_patient[stratify_col] == label]
+            test_patients = cls.loc[cls["_fold"] == k, group_col].to_numpy()
+            rest_patients = cls.loc[cls["_fold"] != k, group_col].to_numpy().copy()
+            val_rng.shuffle(rest_patients)
+
+            n_val = int(round(len(rest_patients) * val_fraction))
+            # Never spend the whole training remainder on val (train needs a share).
+            n_val = min(n_val, max(len(rest_patients) - 1, 0))
+
+            for p in rest_patients[:n_val]:
+                split_of_patient[p] = "val"
+            for p in rest_patients[n_val:]:
+                split_of_patient[p] = "train"
+            for p in test_patients:
+                split_of_patient[p] = "test"
+
+        fold_table = metadata.copy()
+        fold_table[split_col] = fold_table[group_col].map(split_of_patient)
+        yield k, fold_table
+
+
 def make_splits(
     metadata_csv,
     out_path,

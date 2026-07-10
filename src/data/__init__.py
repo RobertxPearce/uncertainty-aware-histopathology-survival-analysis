@@ -9,6 +9,7 @@ from .make_survival_metadata import (
 from .split_cases import (
     assign_splits,
     make_splits,
+    make_cv_folds,
 )
 from .dataset import (
     SurvivalBagDataset,
@@ -30,6 +31,7 @@ __all__ = [
     # splits
     "make_splits",
     "assign_splits",
+    "make_cv_folds",
 
     # datasets and dataloaders
     "SurvivalBagDataset",
