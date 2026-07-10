@@ -34,7 +34,7 @@ from pathlib import Path
 
 # GPU selection
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -113,6 +113,7 @@ MODEL_CONFIG = {
     "attention_dim": 128,
     "gated": True,
     "dropout": 0.25,
+    "temperature": 0.05,   # <-- sharpen attention (baked into training)
 }
 
 # Inner grid: selected inside each outer fold, on that fold's val patients only.
