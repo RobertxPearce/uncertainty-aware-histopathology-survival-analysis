@@ -27,14 +27,18 @@ Example:
 """
 
 import json
+import os
 import sys
 from functools import partial
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-from torch.utils.data import DataLoader
+# GPU selection
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
