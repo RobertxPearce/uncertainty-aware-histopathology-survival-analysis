@@ -150,6 +150,7 @@ def train(
     epochs=50,
     device="auto",
     early_stopping_patience=None,
+    min_epochs=3,
     checkpoint_dir=None,
     model_config=None,
     grad_clip=None,
@@ -166,6 +167,12 @@ def train(
     device: "auto" | "cpu" | "cuda" | "mps", or a torch.device.
     early_stopping_patience: stop after this many epochs without a new best
         C-index (None disables early stopping).
+    min_epochs: no checkpoint is selected, and early stopping cannot fire,
+        before this epoch. A near-random model scores anywhere in a wide band on
+        a small validation split -- on TCGA-LUAD's 92-patient split, epoch-1
+        C-index ranged 0.55 to 0.68 across seeds -- so without this floor the
+        best-epoch rule can select the initialization lottery over a trained
+        model. Set to 1 to restore the unguarded behaviour.
     checkpoint_dir: if given, writes best.pt (each new best) and last.pt (final
         epoch) there, and needs model_config so a checkpoint can rebuild the
         architecture; if None, train() does no disk I/O and just returns history.
@@ -174,6 +181,10 @@ def train(
         {"train_loss": [...], "val_loss": [...], "val_cindex": [...],
          "best_epoch": int, "best_cindex": float}
     """
+    if min_epochs < 1:
+        raise ValueError(f"min_epochs must be >= 1, got {min_epochs}")
+    if min_epochs > epochs:
+        raise ValueError(f"min_epochs ({min_epochs}) exceeds epochs ({epochs})")
     device = pick_device(device)
     model.to(device)
     if checkpoint_dir is not None:
@@ -204,8 +215,12 @@ def train(
             msg += f"  val_loss={val_loss:.4f}  val_cindex={val_cindex:.4f}"
 
             # Select on val C-index; nan (a split with no comparable pairs)
-            # never beats a real score.
-            if np.isfinite(val_cindex) and val_cindex > best_cindex:
+            # never beats a real score. Epochs before min_epochs are scored and
+            # logged but cannot win: too early for the score to reflect training
+            # rather than the initialisation.
+            if epoch < min_epochs:
+                msg += "  (warmup)"
+            elif np.isfinite(val_cindex) and val_cindex > best_cindex:
                 best_cindex = val_cindex
                 best_epoch = epoch
                 best_state = {
@@ -275,6 +290,9 @@ def parse_args():
                         help="Optional max-norm for gradient clipping.")
     parser.add_argument("--early-stopping-patience", type=int, default=None,
                         help="Stop after N epochs without a new best val C-index.")
+    parser.add_argument("--min-epochs", type=int, default=3,
+                        help="No checkpoint is selected before this epoch (guards "
+                             "against the initialisation winning on a small val split).")
     parser.add_argument("--lambda-rnc", type=float, default=0.0,
                         help="Weight of the SurvRNC auxiliary loss (0 = pure Cox).")
     parser.add_argument("--temperature", type=float, default=2.0,
@@ -361,6 +379,7 @@ def main():
         epochs=args.epochs,
         device=device,
         early_stopping_patience=args.early_stopping_patience,
+        min_epochs=args.min_epochs,
         checkpoint_dir=args.out,
         model_config=model_config,
         grad_clip=args.grad_clip,
