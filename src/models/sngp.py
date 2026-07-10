@@ -179,6 +179,7 @@ class SNGPABMILSurvival(nn.Module):
         hidden_dims=None,
         input_norm=False,
         pool_norm=True,
+        temperature=1.0,
         num_features=1024,
         gp_ridge_penalty=1.0,
         gp_input_scale=None,
@@ -195,6 +196,7 @@ class SNGPABMILSurvival(nn.Module):
             hidden_dims=hidden_dims,
             input_norm=input_norm,
             pool_norm=pool_norm,
+            temperature=temperature,
             linear=sn_linear,
         )
         self.risk_head = RandomFeatureGP(
@@ -231,6 +233,7 @@ def build_sngp_model(
     hidden_dims=None,
     input_norm=False,
     pool_norm=True,
+    temperature=1.0,
     num_features=1024,
     gp_ridge_penalty=1.0,
     gp_input_scale=None,
@@ -251,6 +254,7 @@ def build_sngp_model(
         hidden_dims=hidden_dims,
         input_norm=input_norm,
         pool_norm=pool_norm,
+        temperature=temperature,
         num_features=num_features,
         gp_ridge_penalty=gp_ridge_penalty,
         gp_input_scale=gp_input_scale,

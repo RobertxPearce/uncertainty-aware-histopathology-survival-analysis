@@ -35,11 +35,24 @@ class ABMILEncoder(nn.Module):
         hidden_dims=None,
         input_norm=False,
         pool_norm=True,
+        temperature=1.0,
         linear=nn.Linear,
     ):
         super().__init__()
 
         self.gated = gated
+
+        # Attention softmax temperature. The attention logits are divided by it
+        # before the softmax: T < 1 sharpens attention onto the highest-scoring
+        # patches (as T -> 0 it approaches hard top-1 selection), T = 1 is the
+        # standard gated attention, T > 1 flattens toward uniform. Sharper
+        # attention concentrates the pooled bag vector on a few patches, which
+        # can lift a weak Cox signal that uniform pooling dilutes. Baking it into
+        # training also biases the attention branch away from the flat-uniform
+        # collapse it otherwise falls into on small cohorts.
+        if temperature <= 0:
+            raise ValueError(f"temperature must be > 0, got {temperature}")
+        self.temperature = float(temperature)
 
         # LayerNorm over the raw patch features, before any projection. Foundation
         # encoders emit unnormalised embeddings whose per-dimension scales vary a
@@ -97,6 +110,8 @@ class ABMILEncoder(nn.Module):
             attention_features = attention_features * torch.sigmoid(self.attention_u(h))
 
         logits = self.attention_w(attention_features).squeeze(-1)
+        if self.temperature != 1.0:
+            logits = logits / self.temperature
         if mask is not None:
             logits = logits.masked_fill(mask, torch.finfo(logits.dtype).min)
 
@@ -124,6 +139,7 @@ class ABMILSurvival(nn.Module):
         hidden_dims=None,
         input_norm=False,
         pool_norm=True,
+        temperature=1.0,
         risk_hidden_dim=None,
     ):
         super().__init__()
@@ -137,6 +153,7 @@ class ABMILSurvival(nn.Module):
             hidden_dims=hidden_dims,
             input_norm=input_norm,
             pool_norm=pool_norm,
+            temperature=temperature,
         )
 
         # risk_hidden_dim=None keeps the plain linear Cox head. Giving it a width
@@ -192,6 +209,7 @@ def build_model(
     hidden_dims=None,
     input_norm=False,
     pool_norm=True,
+    temperature=1.0,
     risk_hidden_dim=None,
 ):
     """
@@ -210,5 +228,6 @@ def build_model(
         hidden_dims=hidden_dims,
         input_norm=input_norm,
         pool_norm=pool_norm,
+        temperature=temperature,
         risk_hidden_dim=risk_hidden_dim,
     )
