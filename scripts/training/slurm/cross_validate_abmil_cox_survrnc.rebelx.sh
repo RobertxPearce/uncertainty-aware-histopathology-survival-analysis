@@ -47,17 +47,28 @@ mkdir -p logs
 source /home/"$USER"/miniconda3/bin/activate
 conda activate survivors
 
-echo "Running on $(hostname), CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "Running on $(hostname), SLURM set CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 
-# Fail fast if SLURM placed us on a GPU another process is already filling.
-GPU_ID="${CUDA_VISIBLE_DEVICES%%,*}"
-GPU_FREE=$(nvidia-smi -i "${GPU_ID:-0}" --query-gpu=memory.free --format=csv,noheader,nounits)
-echo "Assigned GPU ${GPU_ID:-0}: ${GPU_FREE} MiB free"
-if [ "${GPU_FREE:-0}" -lt 8000 ]; then
-    echo "ERROR: assigned GPU has only ${GPU_FREE} MiB free -- another process is using it."
-    echo "Not starting. Resubmit to be scheduled onto a different card."
+# This partition does not bind a job to a specific GPU: SLURM leaves
+# CUDA_VISIBLE_DEVICES=0 for every job, so jobs pile onto card 0 while the other
+# cards sit idle (that is why we keep landing on a full GPU 0).
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+mapfile -t GPU_FREE < <(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits)
+BEST_ID=-1
+BEST_FREE=0
+for id in "${!GPU_FREE[@]}"; do
+    if [ "${GPU_FREE[$id]}" -gt "$BEST_FREE" ]; then
+        BEST_FREE=${GPU_FREE[$id]}
+        BEST_ID=$id
+    fi
+done
+echo "Freest GPU on $(hostname): index ${BEST_ID}, ${BEST_FREE} MiB free"
+if [ "$BEST_ID" -lt 0 ] || [ "$BEST_FREE" -lt 8000 ]; then
+    echo "ERROR: no GPU on $(hostname) has >= 8000 MiB free. All cards busy; resubmit later."
     exit 1
 fi
+export CUDA_VISIBLE_DEVICES=$BEST_ID
+echo "Bound to GPU $CUDA_VISIBLE_DEVICES"
 
 echo "Starting nested 5-fold CV (inner grid: lambda_rnc)"
 
