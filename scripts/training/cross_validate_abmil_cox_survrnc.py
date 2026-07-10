@@ -14,14 +14,13 @@ selection may be noisy it is one seed on a small val split -- and that is
 fine: a noisy-but-honest selector still yields an unbiased outer estimate,
 because the noise is part of what is being measured.
 
-What the inner grid sweeps: TRAIN_BATCH_SIZE. The Cox partial likelihood treats
-one batch as the risk set, so a large batch buys a well-conditioned likelihood
-but starves the optimizer at batch 96 on ~350 training slides an epoch is
-4 optimizer steps, and the earlier architecture screen showed models stopping
-after 40-80 steps in total, underfit. Smaller batches trade risk-set size for
-steps. That trade, not the encoder architecture, is the open question here: a
-4-architecture x 4-seed screen moved the mean C-index by 0.018 against seed
-noise of 0.028, i.e. not at all.
+What the inner grid sweeps: SurvRNC strength (lambda_rnc). Every candidate is
+Cox + SurvRNC -- the grid does not include 0. Two earlier nested sweeps closed
+off the other knobs: a 4-architecture x 4-seed screen moved the mean C-index by
+0.018 against seed noise of 0.028, and a batch-size sweep over {16, 32, 96}
+moved the inner val by 0.008. Loss weighting is the remaining untested lever --
+the tuning grid never went above lambda_rnc=0.10, while the reference partner
+implementation used 0.5. Batch size is fixed at 32; architecture at the baseline.
 
 Example:
     python scripts/training/cross_validate_abmil_cox_survrnc.py
@@ -76,7 +75,15 @@ RUN_DIR = PROJECT_ROOT / "runs" / EXPERIMENT_NAME
 
 # Cross-validation
 N_SPLITS = 5
-VAL_FRACTION = 0.15  # inner val carved from each fold's training patients (early stopping)
+# Inner val carved from each fold's non-test patients: used for early stopping and
+# for choosing the inner-grid winner. Its size sets how well that choice can be
+# made. A random-risk model on one fold's val patients scores 0.5 +/- this much:
+#     0.15 -> 54 patients, sd 0.086   (a coin flip between the candidates)
+#     0.20 -> 73 patients, sd 0.068
+#     0.25 -> 91 patients, sd 0.062   (matches the outer test fold's 0.056)
+#     0.30 -> 109 patients, sd 0.056  (costs 55 training patients for +0.006)
+# 0.25 buys a selector as precise as the thing being estimated, and stops there.
+VAL_FRACTION = 0.25
 
 # Runtime
 DEVICE = "cuda"
@@ -86,6 +93,10 @@ NUM_WORKERS = 4
 # Data loading
 FEATURE_KEY = "features"
 MAX_PATCHES = 1024
+# Fixed at the middle of the old inner grid. A prior nested run swept this over
+# {16, 32, 96} and found no separation (inner val 0.601 / 0.609 / 0.604, spread
+# 0.008 against selector noise ~0.062), so batch size is no longer a variable.
+TRAIN_BATCH_SIZE = 32
 # Val/test bags are uncapped and large (median ~15k patches), so this must stay
 # much smaller than training.
 EVAL_BATCH_SIZE = 4
@@ -101,14 +112,15 @@ MODEL_CONFIG = {
 }
 
 # Inner grid: selected inside each outer fold, on that fold's val patients only.
-# The Cox risk set is one batch, so this sweeps risk-set size against optimizer
-# steps per epoch.
+# This sweeps SurvRNC strength (lambda_rnc = the paper's beta). Every value is
+# > 0, so every candidate is Cox + SurvRNC, never pure Cox. The old tuning grid
+# never went above 0.10; 0.5 matches the partner's setting. batch size, having
+# been shown irrelevant, is now fixed and no longer swept.
 INNER_GRID = {
-    "train_batch_size": [16, 32, 96],
+    "lambda_rnc": [0.05, 0.1, 0.5],
 }
 
 # Optimization and loss
-LAMBDA_RNC = 0.0  # 0 = pure Cox; set >0 to evaluate a Cox + SurvRNC config
 OPTIMIZER = "adamw"
 LEARNING_RATE = 5e-5
 WEIGHT_DECAY = 1e-3
@@ -119,6 +131,17 @@ EARLY_STOPPING_PATIENCE = 5
 MIN_EPOCHS = 3
 GRAD_CLIP = 1.0
 SURVRNC_TEMPERATURE = 2.0
+
+
+def make_loss_fn(lambda_rnc):
+    """Cox + lambda_rnc * SurvRNC, or plain Cox when lambda_rnc == 0."""
+    if lambda_rnc == 0:
+        return cox_loss_step
+    return partial(
+        survrnc_cox_loss,
+        lambda_rnc=lambda_rnc,
+        temperature=SURVRNC_TEMPERATURE,
+    )
 
 
 def aggregate_patient_predictions(slide_predictions):
@@ -142,7 +165,7 @@ def aggregate_patient_predictions(slide_predictions):
     )
 
 
-def make_fold_loaders(fold_table, seed, train_batch_size):
+def make_fold_loaders(fold_table, seed):
     """Build (train, val, test) loaders for one fold table from make_cv_folds.
 
     The fold table already carries train/val/test labels, so the standard
@@ -157,7 +180,7 @@ def make_fold_loaders(fold_table, seed, train_batch_size):
     )
     train_loader, _, _ = make_dataloaders(
         datasets,
-        batch_size=train_batch_size,
+        batch_size=TRAIN_BATCH_SIZE,
         num_workers=NUM_WORKERS,
         generator=make_generator(seed),
         worker_init_fn=worker_init_fn,
@@ -182,32 +205,31 @@ def patient_cindex_on(model, loader, device):
     return concordance_index(patients["risk"], patients["time"], patients["event"])
 
 
-def select_inner_config(fold_table, fold_dir, loss_fn, device):
+def select_inner_config(fold_table, fold_dir, device):
     """
     Train the inner grid on this fold's train patients, pick on its val patients.
 
-    Returns (best_model, best_test_loader, rows). The outer fold's test patients
-    are never touched here -- that is the whole point of nesting. `rows` records
-    every candidate so the selection itself can be audited afterwards.
+    Sweeps SurvRNC strength (INNER_GRID["lambda_rnc"]). Returns (best, rows). The
+    outer fold's test patients are never touched here -- that is the whole point
+    of nesting. `rows` records every candidate so the selection can be audited.
     """
     best = None
     rows = []
-    for train_batch_size in INNER_GRID["train_batch_size"]:
-        # Same init for every candidate, so the comparison is about the batch
-        # size and not the seed.
+    for lambda_rnc in INNER_GRID["lambda_rnc"]:
+        # Reseed and rebuild the loaders per candidate so weight init and data
+        # order are identical across the grid; only lambda_rnc differs.
         seed_everything(SEED)
-        candidate_dir = fold_dir / f"inner_bs_{train_batch_size}"
+        candidate_dir = fold_dir / f"inner_lambda_{lambda_rnc:g}"
 
-        train_loader, val_loader, test_loader = make_fold_loaders(
-            fold_table, SEED, train_batch_size
-        )
+        train_loader, val_loader, test_loader = make_fold_loaders(fold_table, SEED)
         model = build_model(**MODEL_CONFIG)
         optimizer = build_optimizer(
             model, name=OPTIMIZER, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
         )
+        loss_fn = make_loss_fn(lambda_rnc)
 
         steps_per_epoch = len(train_loader)
-        print(f"  inner: train_batch_size={train_batch_size} ({steps_per_epoch} steps/epoch)")
+        print(f"  inner: lambda_rnc={lambda_rnc:g} ({steps_per_epoch} steps/epoch)")
         history = train(
             model,
             train_loader,
@@ -224,23 +246,30 @@ def select_inner_config(fold_table, fold_dir, loss_fn, device):
             verbose=False,
         )
         val_cindex = patient_cindex_on(model, val_loader, device)
+        # history["best_cindex"] is the slide-level score train() actually selected
+        # on. Printing both separates "the model never learned" from "the patient
+        # aggregation or this val split is the problem".
         print(
             f"    best_epoch={history['best_epoch']} "
             f"({history['best_epoch'] * steps_per_epoch} steps)  "
-            f"inner val patient C-index={val_cindex:.4f}"
+            f"inner val C-index: slide={history['best_cindex']:.4f} "
+            f"patient={val_cindex:.4f}"
         )
 
         rows.append({
-            "train_batch_size": train_batch_size,
+            "lambda_rnc": lambda_rnc,
             "steps_per_epoch": steps_per_epoch,
             "best_epoch": history["best_epoch"],
             "total_steps": history["best_epoch"] * steps_per_epoch,
+            "first_epoch_val_cindex": history["val_cindex"][0],
+            "final_epoch_val_cindex": history["val_cindex"][-1],
+            "inner_val_slide_cindex": history["best_cindex"],
             "inner_val_patient_cindex": val_cindex,
         })
         if best is None or val_cindex > best["val_cindex"]:
             best = {
                 "val_cindex": val_cindex,
-                "train_batch_size": train_batch_size,
+                "lambda_rnc": lambda_rnc,
                 "model": model,
                 "test_loader": test_loader,
                 "history": history,
@@ -255,17 +284,6 @@ def main():
     device = pick_device(DEVICE)
     table = load_survival_table(SPLIT_CSV, project_root=PROJECT_ROOT)
 
-    lambda_rnc = LAMBDA_RNC
-    loss_fn = (
-        cox_loss_step
-        if lambda_rnc == 0
-        else partial(
-            survrnc_cox_loss,
-            lambda_rnc=lambda_rnc,
-            temperature=SURVRNC_TEMPERATURE,
-        )
-    )
-
     settings = {
         "cohort": COHORT,
         "encoder": ENCODER,
@@ -278,10 +296,10 @@ def main():
         "num_workers": NUM_WORKERS,
         "feature_key": FEATURE_KEY,
         "max_patches": MAX_PATCHES,
+        "train_batch_size": TRAIN_BATCH_SIZE,
         "inner_grid": INNER_GRID,
         "eval_batch_size": EVAL_BATCH_SIZE,
         "model_config": MODEL_CONFIG,
-        "lambda_rnc": lambda_rnc,
         "optimizer": OPTIMIZER,
         "learning_rate": LEARNING_RATE,
         "weight_decay": WEIGHT_DECAY,
@@ -295,8 +313,7 @@ def main():
         json.dump(settings, handle, indent=2, sort_keys=True)
 
     print(f"Device: {device}")
-    loss_desc = "Cox" if lambda_rnc == 0 else f"Cox + {lambda_rnc} * SurvRNC"
-    print(f"Loss: {loss_desc}")
+    print(f"Loss: Cox + SurvRNC, lambda_rnc swept over {INNER_GRID['lambda_rnc']}")
     print(f"{N_SPLITS}-fold CV over the full cohort (every patient held out once)")
 
     fold_rows = []
@@ -309,16 +326,16 @@ def main():
         fold_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n[fold {fold_index + 1}/{N_SPLITS}]")
-        best, candidate_rows = select_inner_config(fold_table, fold_dir, loss_fn, device)
+        best, candidate_rows = select_inner_config(fold_table, fold_dir, device)
         for row in candidate_rows:
             row["fold"] = fold_index
-            row["selected"] = row["train_batch_size"] == best["train_batch_size"]
+            row["selected"] = row["lambda_rnc"] == best["lambda_rnc"]
         inner_rows.extend(candidate_rows)
 
         model = best["model"]
         test_loader = best["test_loader"]
         history = best["history"]
-        print(f"  selected train_batch_size={best['train_batch_size']}")
+        print(f"  selected lambda_rnc={best['lambda_rnc']:g}")
 
         # Score the held-out fold -- data this model never saw or selected on.
         test_predictions = predict(model, test_loader, device)
@@ -342,7 +359,7 @@ def main():
         fold_rows.append(
             {
                 "fold": fold_index,
-                "selected_train_batch_size": best["train_batch_size"],
+                "selected_lambda_rnc": best["lambda_rnc"],
                 "inner_val_patient_cindex": best["val_cindex"],
                 "best_epoch": history["best_epoch"],
                 "n_test_patients": len(patient_predictions),
@@ -382,9 +399,9 @@ def main():
     summary = {
         "experiment": EXPERIMENT_NAME,
         "n_splits": N_SPLITS,
-        "lambda_rnc": lambda_rnc,
-        "selected_train_batch_size_per_fold":
-            fold_summary["selected_train_batch_size"].tolist(),
+        "inner_grid": INNER_GRID,
+        "selected_lambda_rnc_per_fold":
+            fold_summary["selected_lambda_rnc"].tolist(),
         "n_patients_total": int(pooled["case_id"].nunique()),
         "n_events_total": int(pooled["event"].sum()),
         "patient_cindex_mean": patient_mean,
@@ -401,30 +418,38 @@ def main():
         json.dump(summary, handle, indent=2)
 
     print("\nNested cross-validation complete")
-    print(fold_summary[["fold", "selected_train_batch_size", "best_epoch",
+    print(fold_summary[["fold", "selected_lambda_rnc", "best_epoch",
                         "n_test_patients", "n_test_events",
                         "inner_val_patient_cindex", "patient_test_cindex"]].to_string(index=False))
 
-    # Inner val C-index by batch size, averaged over folds. This is what the
+    # Inner val C-index by SurvRNC strength, averaged over folds. This is what the
     # selector saw; it does not license a claim about the held-out data, but if
-    # one batch size wins every fold that is worth knowing.
-    print("\nInner val patient C-index by train_batch_size (mean over folds):")
+    # one lambda wins every fold that is worth knowing.
+    print("\nInner val C-index by lambda_rnc (mean over folds):")
     print(
-        inner_summary.groupby("train_batch_size")
-        .agg(inner_val=("inner_val_patient_cindex", "mean"),
-             steps_per_epoch=("steps_per_epoch", "first"),
+        inner_summary.groupby("lambda_rnc")
+        .agg(slide=("inner_val_slide_cindex", "mean"),
+             patient=("inner_val_patient_cindex", "mean"),
              total_steps=("total_steps", "mean"),
              times_selected=("selected", "sum"))
         .to_string()
     )
-    chosen = fold_summary["selected_train_batch_size"]
+    # If no candidate ever beats chance on the inner val, the selection below is
+    # meaningless and so is any claim about SurvRNC strength.
+    if inner_summary["inner_val_slide_cindex"].max() < 0.55:
+        print(
+            "\nWARNING: no inner candidate exceeded 0.55 slide C-index on its own "
+            "validation split. The models are not learning; the fold scores below "
+            "describe noise, not a survival signal."
+        )
+    chosen = fold_summary["selected_lambda_rnc"]
     if chosen.nunique() == 1:
-        print(f"\nEvery fold selected train_batch_size={chosen.iloc[0]}.")
+        print(f"\nEvery fold selected lambda_rnc={chosen.iloc[0]:g}.")
     else:
         print(
-            f"\nFolds disagreed on train_batch_size ({chosen.tolist()}). The outer "
+            f"\nFolds disagreed on lambda_rnc ({chosen.tolist()}). The outer "
             "estimate below is still valid -- it measures the procedure, not one "
-            "config -- but no single batch size is established as best."
+            "config -- but no single SurvRNC strength is established as best."
         )
     print(f"\nPatient-level C-index: {patient_mean:.4f} +/- {patient_std:.4f} (mean +/- std over {N_SPLITS} folds)")
     print(f"Slide-level C-index:   {slide_mean:.4f} +/- {slide_std:.4f}")
