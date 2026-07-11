@@ -28,8 +28,11 @@ ENV/
 .ipynb_checkpoints/
 
 # Data / ML artifacts
-data/raw/slides
-data/processed
+data/raw/*/slides/
+data/processed/
+!data/processed/experiments/
+!data/processed/experiments/**/
+!data/processed/experiments/**/*.csv
 
 # Setup & Preprocessing
 setup_and_preprocess.sh
