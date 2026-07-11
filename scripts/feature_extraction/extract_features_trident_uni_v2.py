@@ -21,12 +21,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TRIDENT_ROOT = PROJECT_ROOT / "TRIDENT"
 
-# Local TRIDENT must shadow any site-packages package of the same name; this
-# must happen before `import trident`.
 sys.path.insert(0, str(TRIDENT_ROOT))
 
-# Keep downloaded model weights inside the repo (gitignored: model_cache/); must
-# be set before importing trident/huggingface.
 CACHE_ROOT = PROJECT_ROOT / "model_cache"
 os.environ.setdefault("HF_HUB_CACHE", str(CACHE_ROOT / "huggingface"))
 os.environ.setdefault("TORCH_HOME", str(CACHE_ROOT / "torch"))
@@ -47,7 +43,7 @@ def resolve_device():
 
 
 # Cohort / Encoder
-COHORT  = "TCGA_LUAD"
+COHORT  = "TCGA_GBMLGG"
 ENCODER = "uni_v2"
 
 # Patching. uni_v2 (UNI2-h) uses the same patching as uni_v1: 256px patches at
@@ -60,10 +56,8 @@ SEG_MAG    = 10
 DATA = PROJECT_ROOT / "data"
 
 # Input Paths
-SLIDES_DIR = DATA / "raw/slides"                         # <file_id>/<file>.svs
-# Output Paths (current repo layout, matches build_survival_table_local.py).
-# geojson/work sit under trident/<cohort>/ with no encoder level because tissue
-# segmentation and patch coords are encoder-independent (shared across uni_v1/v2).
+SLIDES_DIR = DATA / "raw" / COHORT / "slides"
+
 FEATURES_DIR = DATA / "processed/features" / ENCODER / COHORT
 GEOJSON_DIR  = DATA / "processed/trident" / COHORT / "geojson"
 WORK_DIR     = DATA / "processed/trident" / COHORT / "work"
@@ -133,8 +127,6 @@ def main():
                                          save_features=str(FEATURES_DIR), device=DEVICE)
 
             # Collect this slide's segmentation geojson next to the features.
-            # TRIDENT writes it to <work>/contours_geojson/<stem>.geojson. Best-
-            # effort: a failed move must not fail an otherwise-good slide.
             try:
                 src_geojson = WORK_DIR / "contours_geojson" / f"{Path(svs_path).stem}.geojson"
                 if src_geojson.exists():

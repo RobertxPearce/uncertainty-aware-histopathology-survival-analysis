@@ -1,5 +1,5 @@
 """
-Build the survival table locally using the TCGA-LUAD clinical data from GDC.
+Build the survival table locally using the clinical data from GDC.
 
 make_survival_metadata  (patient-level survival table)
 attach_feature_paths    (join to .h5 feature bags)
@@ -24,18 +24,18 @@ from src import (
 )
 
 # Experiment/Run Name
-COHORT          = "TCGA_LUAD"
+COHORT          = "TCGA_GBMLGG"
 ENCODER         = "uni_v2"
-EXPERIMENT_NAME = f"{ENCODER}_luad"
+EXPERIMENT_NAME = f"{ENCODER}_{COHORT}"
 
 DATA = PROJECT_ROOT / "data"
 
 # Input Paths
-SAMPLE_SHEET = DATA / "raw/gdc_sample_sheet.2026-06-24.tsv"
-CLINICAL_TSV = DATA / "raw/clinical/clinical_supplement/clinical.tsv"
+SAMPLE_SHEET = DATA / "raw" / COHORT / "gdc_sample_sheet.2026-07-11.tsv"
+CLINICAL_TSV = DATA / "raw" / COHORT / "clinical/clinical_supplement/clinical.tsv"
 FEATURE_DIR  = DATA / "processed/features" / ENCODER / COHORT
 # Output Paths
-SURV_TABLE_CSV  = DATA / "interim/survival_table.csv"
+SURV_TABLE_CSV  = DATA / f"interim/survival_table_{COHORT}.csv"
 EXP_DIR         = DATA / "processed/experiments" / EXPERIMENT_NAME
 METADATA_CSV    = EXP_DIR / "survival_metadata.csv"
 SPLIT_CSV       = EXP_DIR / "splits.csv"
