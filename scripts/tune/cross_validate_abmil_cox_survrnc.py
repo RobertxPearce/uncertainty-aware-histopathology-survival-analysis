@@ -1,34 +1,18 @@
 """Nested cross-validation of ABMIL Cox (+ optional SurvRNC) over the whole cohort.
 
-Motivation: a single 45-patient / 16-event holdout gives a C-index whose 95%
-interval is ~0.28 wide it cannot tell a good model from a lucky split. This
-script runs patient-level, event-stratified K-fold CV over all patients: every
-patient is scored exactly once, in the fold where it is held out.
+Patient-level, event-stratified K-fold CV: every patient is scored once, in the
+fold where it is held out. Nested, not flat -- inside each outer fold the inner
+grid is trained on that fold's train patients and selected on its val patients,
+then the winner is scored on the held-out fold, which never influences the
+choice. The estimate is of the whole tune-then-fit procedure, not of a config
+chosen with the test data in view.
 
-Nested, not flat. Inside each outer fold the inner grid is trained on that fold's
-training patients and selected on its inner validation patients; only then is the
-winner scored on the held-out fold. The outer fold never influences the choice,
-so the reported number estimates the whole procedure (tune, then fit) rather
-than a configuration that was chosen with the test data in view. The inner
-selection may be noisy it is one seed on a small val split -- and that is
-fine: a noisy-but-honest selector still yields an unbiased outer estimate,
-because the noise is part of what is being measured.
-
-What the inner grid sweeps: three loss/attention knobs left open after batch
-size and architecture came back flat (a 4-architecture x 4-seed screen moved the
-mean C-index by 0.018 against seed noise 0.028; a batch-size sweep over
-{16, 32, 96} moved the inner val by 0.008):
-  - lambda_rnc          SurvRNC strength; 0.0 is pure Cox, currently the best
-                        result (Cox-only outer 0.591 vs Cox+SurvRNC 0.561).
-  - temperature         attention sharpness; 0.05 sharpens, 1.0 is standard.
-  - survrnc_temperature SurvRNC contrastive temperature; 0.1 vs 2.0.
-The 0.05 attention temperature and 0.1 SurvRNC temperature are the partner
-implementation's settings (it scored higher on a different data pipeline); this
-grid ports those knobs into the honest nested-CV harness to see which actually
-help here. Batch size is fixed at 32; architecture at the baseline.
+The inner grid sweeps lambda_rnc (SurvRNC strength), temperature (attention
+sharpness), and survrnc_temperature (SurvRNC contrastive temperature); batch
+size and architecture came back flat in earlier screens and are fixed.
 
 Example:
-    python scripts/training/cross_validate_abmil_cox_survrnc.py
+    python scripts/tune/cross_validate_abmil_cox_survrnc.py
 """
 
 import json
@@ -84,14 +68,9 @@ RUN_DIR = PROJECT_ROOT / "runs" / EXPERIMENT_NAME
 
 # Cross-validation
 N_SPLITS = 5
-# Inner val carved from each fold's non-test patients: used for early stopping and
-# for choosing the inner-grid winner. Its size sets how well that choice can be
-# made. A random-risk model on one fold's val patients scores 0.5 +/- this much:
-#     0.15 -> 54 patients, sd 0.086   (a coin flip between the candidates)
-#     0.20 -> 73 patients, sd 0.068
-#     0.25 -> 91 patients, sd 0.062   (matches the outer test fold's 0.056)
-#     0.30 -> 109 patients, sd 0.056  (costs 55 training patients for +0.006)
-# 0.25 buys a selector as precise as the thing being estimated, and stops there.
+# Inner val carved from each fold's non-test patients, for early stopping and
+# picking the inner-grid winner. At 0.25 (~91 patients) the selector is about as
+# precise as the outer estimate itself.
 VAL_FRACTION = 0.25
 
 # Runtime
@@ -102,17 +81,13 @@ NUM_WORKERS = 4
 # Data loading
 FEATURE_KEY = "features"
 MAX_PATCHES = 1024
-# Fixed at the middle of the old inner grid. A prior nested run swept this over
-# {16, 32, 96} and found no separation (inner val 0.601 / 0.609 / 0.604, spread
-# 0.008 against selector noise ~0.062), so batch size is no longer a variable.
+# Fixed: a prior nested sweep over {16, 32, 96} found no separation.
 TRAIN_BATCH_SIZE = 32
-# Val/test bags are uncapped and large (median ~15k patches), so this must stay
-# much smaller than training.
+# Val/test bags are uncapped and large (median ~15k patches); keep this small.
 EVAL_BATCH_SIZE = 4
 
-# Fixed model settings. The architecture screen found no separation between
-# baseline / input_norm / deep_proj / wide, so the smallest is kept. Attention
-# `temperature` is NOT set here -- it is swept per candidate in the inner grid.
+# Fixed baseline architecture (the architecture screen found no separation).
+# Attention `temperature` is swept per candidate in the inner grid, not set here.
 MODEL_CONFIG = {
     "input_dim": 1536,
     "embed_dim": 128,
@@ -121,15 +96,9 @@ MODEL_CONFIG = {
     "dropout": 0.25,
 }
 
-# Inner grid: every candidate is trained on the fold's train patients and the
-# winner is chosen on its val patients. Sweeps lambda_rnc x temperature x
-# survrnc_temperature (see module docstring). When lambda_rnc == 0 there is no
-# SurvRNC term, so its temperature is irrelevant and those redundant
-# combinations are dropped (survrnc_temperature = None).
-#
-# Other partner-vs-ours differences are confounded in the partner's reported
-# gain (no patch cap, wider projector, no dropout, weight_decay 1e-4); they are
-# held fixed here to keep the grid readable and can be added as further knobs.
+# Inner grid over lambda_rnc x temperature x survrnc_temperature. When
+# lambda_rnc == 0 there is no SurvRNC term, so its temperature is dropped
+# (survrnc_temperature = None).
 def _inner_grid():
     grid = []
     for lambda_rnc in (0.0, 0.1, 0.5):
@@ -161,8 +130,7 @@ LEARNING_RATE = 5e-5
 WEIGHT_DECAY = 1e-3
 EPOCHS = 50
 EARLY_STOPPING_PATIENCE = 5
-# No checkpoint is selected before this epoch. Without it the initialisation can
-# win: in the architecture screen one run's best epoch was 1, four gradient steps.
+# No checkpoint is selected before this epoch, so a lucky initialisation can't win.
 MIN_EPOCHS = 3
 GRAD_CLIP = 1.0
 
@@ -200,12 +168,7 @@ def aggregate_patient_predictions(slide_predictions):
 
 
 def make_fold_loaders(fold_table, seed):
-    """Build (train, val, test) loaders for one fold table from make_cv_folds.
-
-    The fold table already carries train/val/test labels, so the standard
-    make_datasets -> make_dataloaders path applies. Val and test bags are uncapped
-    and scored at the smaller EVAL_BATCH_SIZE, mirroring the tuning script.
-    """
+    """Build (train, val, test) loaders for one fold table from make_cv_folds."""
     datasets = make_datasets(
         fold_table,
         feature_key=FEATURE_KEY,
@@ -240,20 +203,17 @@ def patient_cindex_on(model, loader, device):
 
 
 def select_inner_config(fold_table, fold_dir, device):
-    """
-    Train every inner-grid candidate on this fold's train patients, pick on val.
+    """Train every inner-grid candidate on this fold's train patients, pick on val.
 
-    Sweeps the loss/attention grid (INNER_GRID). Returns (best, rows). The outer
-    fold's test patients are never touched here -- that is the whole point of
-    nesting. `rows` records every candidate so the selection can be audited.
+    Returns (best, rows); rows records every candidate for auditing. The outer
+    fold's test patients are never touched here.
     """
     best = None
     rows = []
     for candidate in INNER_GRID:
         label = config_label(candidate)
         lambda_rnc = candidate["lambda_rnc"]
-        # Reseed and rebuild the loaders per candidate so weight init and data
-        # order are identical across the grid; only the swept knobs differ.
+        # Reseed per candidate so weight init and data order match across the grid.
         seed_everything(SEED)
         candidate_dir = fold_dir / f"inner_{label}"
 
@@ -283,9 +243,7 @@ def select_inner_config(fold_table, fold_dir, device):
             verbose=False,
         )
         val_cindex = patient_cindex_on(model, val_loader, device)
-        # history["best_cindex"] is the slide-level score train() actually selected
-        # on. Printing both separates "the model never learned" from "the patient
-        # aggregation or this val split is the problem".
+        # Slide score is what train() selected on; print both to localise problems.
         print(
             f"    best_epoch={history['best_epoch']} "
             f"({history['best_epoch'] * steps_per_epoch} steps)  "
@@ -431,9 +389,9 @@ def main():
     patient_mean, patient_std = float(patient_scores.mean()), float(patient_scores.std(ddof=1))
     slide_mean, slide_std = float(slide_scores.mean()), float(slide_scores.std(ddof=1))
 
-    # Secondary: pool the per-fold held-out patient predictions (each patient once,
-    # whole cohort) and bootstrap a single CI. Ranks mix scores from the 5 fold
-    # models, so read this alongside -- not instead of -- the mean +/- std above.
+    # Secondary: pool the per-fold held-out predictions (each patient once) and
+    # bootstrap one CI. Ranks mix the 5 fold models, so read it alongside the
+    # mean +/- std above, not instead of it.
     pooled = pd.concat(pooled_patient_predictions, ignore_index=True)
     pooled.to_csv(RUN_DIR / "cv_pooled_patient_predictions.csv", index=False)
     pooled_point, pooled_lo, pooled_hi, n_valid = bootstrap_cindex(
@@ -465,9 +423,7 @@ def main():
                         "n_test_patients", "n_test_events",
                         "inner_val_patient_cindex", "patient_test_cindex"]].to_string(index=False))
 
-    # Inner val C-index by candidate, averaged over folds. This is what the
-    # selector saw; it does not license a claim about the held-out data, but if
-    # one config wins on most folds that is worth knowing.
+    # Inner val C-index by candidate, averaged over folds -- what the selector saw.
     print("\nInner val C-index by candidate (mean over folds, best first):")
     print(
         inner_summary.groupby("config")
@@ -478,8 +434,7 @@ def main():
         .sort_values("patient", ascending=False)
         .to_string()
     )
-    # If no candidate ever beats chance on the inner val, the selection below is
-    # meaningless and so is any claim about SurvRNC strength.
+    # If nothing beats chance on inner val, the selection below is meaningless.
     if inner_summary["inner_val_slide_cindex"].max() < 0.55:
         print(
             "\nWARNING: no inner candidate exceeded 0.55 slide C-index on its own "

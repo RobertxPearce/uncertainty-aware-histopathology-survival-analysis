@@ -1,11 +1,11 @@
 """Tune a regularized ABMIL Cox + SurvRNC model on one frozen train/val split.
 
-This script intentionally does only model tuning: no uncertainty estimators,
-test-set scoring, or plots. It trains a compact grid, evaluates each selected
-checkpoint at the patient level on validation data, and writes a ranked CSV.
+Model tuning only -- no uncertainty estimators, test-set scoring, or plots. It
+trains a compact grid, evaluates each checkpoint at the patient level on
+validation, and writes a ranked CSV.
 
 Example:
-    python scripts/training/tune_abmil_cox_survrnc.py
+    python scripts/tune/tune_abmil_cox_survrnc.py
 """
 
 import json
@@ -56,21 +56,15 @@ DEVICE = "cuda"
 SEED = 42
 NUM_WORKERS = 4
 
-# Every (architecture, hyperparameter) trial is repeated once per seed and ranked
-# on the mean. A single seed cannot separate these architectures: the validation
-# split holds 92 patients / 33 events, on which one run's patient C-index has a
-# standard deviation near 0.04, so the best of several single-seed trials is
-# inflated by roughly that much even when the architectures are equally good.
+# Each config is repeated per seed and ranked on the mean; a single seed can't
+# separate these architectures (val C-index std ~0.04 on 92 patients).
 SEEDS = [42, 43, 44, 45]
 
 # Data loading
 FEATURE_KEY = "features"
 MAX_PATCHES = 1024
 TRAIN_BATCH_SIZE = 96
-# Validation bags are uncapped and large (median ~15k patches, max ~42k), and
-# collate_bags pads to the longest bag in the batch. Architectures with
-# input_norm or a wide embed_dim hold several full-size [B, N, 1536] tensors at
-# once, so this must remain much smaller than training.
+# Validation bags are uncapped and large (median ~15k patches); keep this small.
 EVAL_BATCH_SIZE = 4
 
 # Model settings shared by every architecture below.
@@ -79,8 +73,7 @@ MODEL_CONFIG = {
     "gated": True,
 }
 
-# Named architectures, each a set of overrides on MODEL_CONFIG. Names become part
-# of the trial directory name.
+# Named architectures, each a set of overrides on MODEL_CONFIG.
 ARCHITECTURES = {
     "baseline": dict(embed_dim=128, attention_dim=128),
     "baseline_input_norm": dict(embed_dim=128, attention_dim=128, input_norm=True),
@@ -204,9 +197,8 @@ def main():
         dropout = params["dropout"]
         lambda_rnc = params["lambda_rnc"]
 
-        # The seed drives weight init, batch shuffling, and train-split patch
-        # sampling, so repeating a config across SEEDS measures exactly the run
-        # variance that would otherwise be mistaken for an architecture effect.
+        # Repeating a config across SEEDS measures the run variance that would
+        # otherwise be mistaken for an architecture effect.
         seed_everything(trial_seed)
         config_name = f"{arch_name}__dropout_{dropout:g}__lambda_rnc_{lambda_rnc:g}"
         trial_name = f"{config_name}__seed_{trial_seed}"
@@ -276,8 +268,7 @@ def main():
 
     trials_frame = pd.DataFrame(rows)
 
-    # Rank configs by the mean across seeds, never by a single run. std is the
-    # seed noise; a gap between two configs smaller than it means nothing.
+    # Rank by the mean across seeds; a gap smaller than the seed-noise std means nothing.
     summary = (
         trials_frame.groupby(["config", "architecture", "dropout", "lambda_rnc", "params"])
         .agg(
@@ -308,8 +299,7 @@ def main():
         .to_string()
     )
 
-    # A gap smaller than the seed noise is not a result. Say so rather than
-    # letting the ordering of the table imply a winner.
+    # A gap smaller than the seed noise is not a result.
     if len(summary) > 1:
         gap = best["mean_val_cindex"] - summary.iloc[1]["mean_val_cindex"]
         noise = trials_frame["patient_val_cindex"].std()
