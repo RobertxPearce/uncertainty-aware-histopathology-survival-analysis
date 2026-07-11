@@ -1,7 +1,7 @@
 """Nested cross-validation of ABMIL Cox (+ optional SurvRNC) over the whole cohort.
 
 Patient-level, event-stratified K-fold CV: every patient is scored once, in the
-fold where it is held out. Nested, not flat -- inside each outer fold the inner
+fold where it is held out. Nested, not flat - inside each outer fold the inner
 grid is trained on that fold's train patients and selected on its val patients,
 then the winner is scored on the held-out fold, which never influences the
 choice. The estimate is of the whole tune-then-fit procedure, not of a config
@@ -9,10 +9,11 @@ chosen with the test data in view.
 
 The inner grid sweeps lambda_rnc (SurvRNC strength), temperature (attention
 sharpness), and survrnc_temperature (SurvRNC contrastive temperature); batch
-size and architecture came back flat in earlier screens and are fixed.
+size and architecture came back flat in the K-fold screen
+(screen_architecture_abmil_cox_survrnc.py) and are fixed here.
 
 Example:
-    python scripts/tune/cross_validate_abmil_cox_survrnc.py
+    python scripts/tune/tune_loss_abmil_cox_survrnc.py
 """
 
 import json
