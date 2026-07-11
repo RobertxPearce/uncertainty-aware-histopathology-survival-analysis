@@ -51,12 +51,12 @@ from src.train.train_loop import cox_loss_step
 # ----------------------------------------------------------------------
 
 # Experiment and paths
-COHORT = "TCGA_LUAD"
+COHORT = "TCGA_GBMLGG"
 ENCODER = "uni_v2"
 EXPERIMENT_NAME = f"abmil_cox_survrnc_arch_screen_{ENCODER}_{COHORT}"
 # Any table with all patients works; the split file is re-folded here, so its
 # train/val/test labels are ignored and every patient is used.
-SPLIT_CSV = PROJECT_ROOT / "data/processed/experiments/uni_v2_luad/splits.csv"
+SPLIT_CSV = PROJECT_ROOT / "data/processed/experiments/uni_v2_TCGA_GBMLGG/splits.csv"
 RUN_DIR = PROJECT_ROOT / "runs" / EXPERIMENT_NAME
 
 # Cross-validation
