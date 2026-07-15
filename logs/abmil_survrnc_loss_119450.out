@@ -1,0 +1,165 @@
+Running on gpu002, SLURM set CUDA_VISIBLE_DEVICES=0
+index, memory.free [MiB]
+0, 24166 MiB
+1, 24166 MiB
+2, 24166 MiB
+3, 24166 MiB
+4, 24166 MiB
+5, 24166 MiB
+6, 24166 MiB
+7, 24166 MiB
+Starting nested 5-fold CV loss tuning (inner grid: lambda_rnc x temperature)
+load_survival_table: dropping 2 slide(s) from 2 case(s) with time <= 0: TCGA-RR-A6KB, TCGA-TQ-A7RS
+Device: cuda
+Inner grid: 10 candidates over lambda_rnc x temperature x survrnc_temperature
+5-fold CV over the full cohort (every patient held out once)
+
+[fold 1/5]
+  inner: rnc0_T1 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7848 patient=0.7848
+  inner: rnc0_T0.05 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7871 patient=0.7871
+  inner: rnc0.1_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T1_st2 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7840 patient=0.7840
+  inner: rnc0.1_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T0.05_st2 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7851 patient=0.7851
+  inner: rnc0.5_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T1_st2 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7826 patient=0.7826
+  inner: rnc0.5_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T0.05_st2 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7820 patient=0.7820
+  selected config: rnc0_T0.05
+held-out fold C-index: slide=0.7722 patient=0.7722 (n=175, events=89)
+
+[fold 2/5]
+  inner: rnc0_T1 (17 steps/epoch)
+    best_epoch=12 (204 steps)  inner val C-index: slide=0.7656 patient=0.7656
+  inner: rnc0_T0.05 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7665 patient=0.7665
+  inner: rnc0.1_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T1_st2 (17 steps/epoch)
+    best_epoch=12 (204 steps)  inner val C-index: slide=0.7649 patient=0.7649
+  inner: rnc0.1_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T0.05_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7651 patient=0.7651
+  inner: rnc0.5_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T1_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7602 patient=0.7602
+  inner: rnc0.5_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T0.05_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7622 patient=0.7622
+  selected config: rnc0_T0.05
+held-out fold C-index: slide=0.7720 patient=0.7720 (n=175, events=89)
+
+[fold 3/5]
+  inner: rnc0_T1 (17 steps/epoch)
+    best_epoch=7 (119 steps)  inner val C-index: slide=0.8097 patient=0.8097
+  inner: rnc0_T0.05 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.8071 patient=0.8071
+  inner: rnc0.1_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T1_st2 (17 steps/epoch)
+    best_epoch=7 (119 steps)  inner val C-index: slide=0.8092 patient=0.8092
+  inner: rnc0.1_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T0.05_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.8067 patient=0.8067
+  inner: rnc0.5_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T1_st2 (17 steps/epoch)
+    best_epoch=10 (170 steps)  inner val C-index: slide=0.8061 patient=0.8061
+  inner: rnc0.5_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T0.05_st2 (17 steps/epoch)
+    best_epoch=7 (119 steps)  inner val C-index: slide=0.8056 patient=0.8056
+  selected config: rnc0_T1
+held-out fold C-index: slide=0.7563 patient=0.7563 (n=175, events=89)
+
+[fold 4/5]
+  inner: rnc0_T1 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7226 patient=0.7226
+  inner: rnc0_T0.05 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7254 patient=0.7254
+  inner: rnc0.1_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T1_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7231 patient=0.7231
+  inner: rnc0.1_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T0.05_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7258 patient=0.7258
+  inner: rnc0.5_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T1_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7242 patient=0.7242
+  inner: rnc0.5_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T0.05_st2 (17 steps/epoch)
+    best_epoch=9 (153 steps)  inner val C-index: slide=0.7255 patient=0.7255
+  selected config: rnc0.1_T0.05_st2
+held-out fold C-index: slide=0.7428 patient=0.7428 (n=175, events=89)
+
+[fold 5/5]
+  inner: rnc0_T1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.7413 patient=0.7413
+  inner: rnc0_T0.05 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.7407 patient=0.7407
+  inner: rnc0.1_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T1_st2 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7410 patient=0.7410
+  inner: rnc0.1_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.1_T0.05_st2 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.7404 patient=0.7404
+  inner: rnc0.5_T1_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T1_st2 (17 steps/epoch)
+    best_epoch=4 (68 steps)  inner val C-index: slide=0.7407 patient=0.7407
+  inner: rnc0.5_T0.05_st0.1 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.0000 patient=0.0000
+  inner: rnc0.5_T0.05_st2 (17 steps/epoch)
+    best_epoch=3 (51 steps)  inner val C-index: slide=0.7390 patient=0.7390
+  selected config: rnc0_T1
+held-out fold C-index: slide=0.7748 patient=0.7748 (n=175, events=89)
+
+Nested cross-validation complete
+ fold  selected_config  best_epoch  n_test_patients  n_test_events  inner_val_patient_cindex  patient_test_cindex
+    0       rnc0_T0.05           4              175             89                  0.787059             0.772180
+    1       rnc0_T0.05           9              175             89                  0.766465             0.772047
+    2          rnc0_T1           7              175             89                  0.809679             0.756275
+    3 rnc0.1_T0.05_st2           9              175             89                  0.725762             0.742757
+    4          rnc0_T1           3              175             89                  0.741275             0.774825
+
+Inner val C-index by candidate (mean over folds, best first):
+                       slide   patient  total_steps  times_selected
+config                                                             
+rnc0_T0.05          0.765351  0.765351        115.6               2
+rnc0_T1             0.764793  0.764793        119.0               2
+rnc0.1_T0.05_st2    0.764609  0.764609        115.6               1
+rnc0.1_T1_st2       0.764461  0.764461        122.4               0
+rnc0.5_T0.05_st2    0.762868  0.762868        108.8               0
+rnc0.5_T1_st2       0.762748  0.762748        122.4               0
+rnc0.1_T0.05_st0.1  0.000000  0.000000         51.0               0
+rnc0.1_T1_st0.1     0.000000  0.000000         51.0               0
+rnc0.5_T0.05_st0.1  0.000000  0.000000         51.0               0
+rnc0.5_T1_st0.1     0.000000  0.000000         51.0               0
+
+Folds disagreed on the config (['rnc0_T0.05', 'rnc0_T0.05', 'rnc0_T1', 'rnc0.1_T0.05_st2', 'rnc0_T1']). The outer estimate below is still valid -- it measures the procedure, not one config -- but no single config is established as best.
+
+Patient-level C-index: 0.7636 +/- 0.0138 (mean +/- std over 5 folds)
+Slide-level C-index:   0.7636 +/- 0.0138
+Pooled patient C-index: 0.7565 (95% CI 0.7350-0.7784, 875 patients)
+
+Saved CV results to: /home/sp00006/uncertainty-aware-histopathology-survival-analysis/runs/abmil_cox_survrnc_cv_uni_v2_TCGA_GBMLGG

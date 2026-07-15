@@ -1,0 +1,47 @@
+Running on gpu002, CUDA_VISIBLE_DEVICES=0
+Starting K-fold CV architecture screen (4 architectures x 5 folds)
+load_survival_table: dropping 2 slide(s) from 2 case(s) with time <= 0: TCGA-RR-A6KB, TCGA-TQ-A7RS
+Device: cuda
+5-fold CV over the full cohort: 4 architectures x 5 folds = 20 training runs
+
+[architecture: baseline]
+  fold 1/5: best_epoch=3 held-out patient C-index=0.7534
+  fold 2/5: best_epoch=19 held-out patient C-index=0.7716
+  fold 3/5: best_epoch=9 held-out patient C-index=0.7477
+  fold 4/5: best_epoch=4 held-out patient C-index=0.7223
+  fold 5/5: best_epoch=11 held-out patient C-index=0.7575
+
+[architecture: baseline_input_norm]
+  fold 1/5: best_epoch=3 held-out patient C-index=0.7558
+  fold 2/5: best_epoch=16 held-out patient C-index=0.7723
+  fold 3/5: best_epoch=15 held-out patient C-index=0.7467
+  fold 4/5: best_epoch=4 held-out patient C-index=0.7232
+  fold 5/5: best_epoch=10 held-out patient C-index=0.7636
+
+[architecture: deep_proj]
+  fold 1/5: best_epoch=3 held-out patient C-index=0.7693
+  fold 2/5: best_epoch=8 held-out patient C-index=0.7722
+  fold 3/5: best_epoch=11 held-out patient C-index=0.7672
+  fold 4/5: best_epoch=3 held-out patient C-index=0.7143
+  fold 5/5: best_epoch=6 held-out patient C-index=0.7622
+
+[architecture: wide]
+  fold 1/5: best_epoch=8 held-out patient C-index=0.7690
+  fold 2/5: best_epoch=29 held-out patient C-index=0.7758
+  fold 3/5: best_epoch=19 held-out patient C-index=0.7691
+  fold 4/5: best_epoch=5 held-out patient C-index=0.7124
+  fold 5/5: best_epoch=7 held-out patient C-index=0.7895
+
+Architecture screen complete
+       architecture  params  folds  mean_test_cindex  std_test_cindex  min_test_cindex  max_test_cindex
+               wide 1184514      5          0.763156         0.029600         0.712364         0.789536
+          deep_proj  987778      5          0.757031         0.024157         0.714304         0.772164
+baseline_input_norm  233346      5          0.752297         0.018808         0.723228         0.772281
+           baseline  230274      5          0.750504         0.018052         0.722323         0.771579
+
+Top-two gap: 0.0061 | fold noise (std over all runs): 0.0218
+The top two architectures are within fold noise of each other. Treat this as 'no architecture separated', not as a winner.
+
+Best architecture: wide (0.7632 +/- 0.0296 over 5 folds)
+
+Saved architecture-screen results to: /home/sp00006/uncertainty-aware-histopathology-survival-analysis/runs/abmil_cox_survrnc_arch_screen_uni_v2_TCGA_GBMLGG

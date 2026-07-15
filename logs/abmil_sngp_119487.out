@@ -1,0 +1,62 @@
+Running on gpu002, CUDA_VISIBLE_DEVICES=1
+Starting SNGP: 5-fold CV + frozen-split refit on TCGA-GBMLGG
+load_survival_table: dropping 2 slide(s) from 2 case(s) with time <= 0: TCGA-RR-A6KB, TCGA-TQ-A7RS
+Device        cuda   seed 42
+Cohort        TCGA_GBMLGG / uni_v2
+CSV           data/processed/experiments/uni_v2_TCGA_GBMLGG/splits.csv
+
+Split     Patients   Slides   Events
+train          614      614      312
+val            174      174       89
+test            87       87       44
+
+Model         SNGPABMILSurvival  (234,241 params, random-feature-gp head)
+Config        input_dim=1536  embed_dim=128  attention_dim=128  input_norm=True  gated=True  dropout=0.25  num_features=1024  gp_ridge_penalty=1.0  spectral_norm_bound=0.95
+SNGPABMILSurvival(
+  (encoder): ABMILEncoder(
+    (input_norm): LayerNorm((1536,), eps=1e-05, elementwise_affine=True)
+    (patch_proj): Sequential(
+      (0): SpectralNormLinear(in_features=1536, out_features=128, bias=True)
+      (1): ReLU()
+      (2): Dropout(p=0.25, inplace=False)
+    )
+    (attention_v): SpectralNormLinear(in_features=128, out_features=128, bias=True)
+    (attention_u): SpectralNormLinear(in_features=128, out_features=128, bias=True)
+    (attention_w): SpectralNormLinear(in_features=128, out_features=1, bias=True)
+    (norm): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+  )
+  (risk_head): RandomFeatureGP(
+    (beta): Linear(in_features=1024, out_features=1, bias=False)
+  )
+)
+
+Loss          cox
+Optimizer     adamw  lr=5e-05  wd=0.001  epochs=50  patience=5  grad_clip=1.0
+SNGP          features=1024  ridge=1.0  norm_bound=0.95  bootstrap=1000
+
+--- Phase 1: 5-Fold Cross-Validation ---
+
+Per Fold: train 525, val 175, test 175
+
+Fold    C-index  Sel-AUC  Risk-std  Patients  Events  Best-Epoch
+1/5      0.7742   0.8405    0.3955       175      89          14
+2/5      0.7911   0.8451    0.3440       175      89          47
+3/5      0.7483   0.7595    0.3484       175      89          28
+4/5      0.7254   0.8225    0.3342       175      89          29
+5/5      0.7755   0.8137    0.4268       175      89           6
+
+Mean          C-index 0.7629 +/- 0.0260   (min 0.7254, max 0.7911)
+Pooled        C-index 0.7440   95% CI [0.7215, 0.7669]
+              Sel-AUC 0.8163   risk-std 0.3698
+
+--- Phase 2: Frozen-Split Refit ---
+
+Fitting on train 614, val 174, test 87 ...
+
+Test set      87 patients, 44 events
+Deterministic C-index 0.7734   95% CI [0.6988, 0.8384]
+SNGP          C-index 0.7734   95% CI [0.6988, 0.8384]
+              sel-AUC 0.8632   risk-std 0.3672
+
+Results       results/sngp_abmil_cox_tcga_gbmlgg
+checkpoints   results/sngp_abmil_cox_tcga_gbmlgg/checkpoints  (5 folds + frozen_split.pt)
