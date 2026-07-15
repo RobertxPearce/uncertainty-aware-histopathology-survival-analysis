@@ -350,7 +350,9 @@ def run_cross_validation(table, device, loss_fn):
         )
         result = score_uq_frame(uq_df)
         rows.append({"fold": fold_index, **result})
-        pooled.append(to_patient_frame(uq_df))
+        # Tag the fold: the five folds are five separately-fit models whose Cox scores
+        # share no common scale, so anything pooling them needs to know which is which.
+        pooled.append(to_patient_frame(uq_df).assign(fold=fold_index))
         print(
             f"{f'{fold_index + 1}/{N_SPLITS}':<6}{result['c_index']:>9.4f}"
             f"{result['selective_auc']:>9.4f}{result['mean_risk_std']:>10.4f}"

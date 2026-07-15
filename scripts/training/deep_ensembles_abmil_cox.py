@@ -377,7 +377,9 @@ def run_cross_validation(table, device, loss_fn):
         uq_df = deep_ensemble_predict(models, test_loader, device)
         result = score_uq_frame(uq_df)
         rows.append({"fold": fold_index, **result})
-        pooled.append(to_patient_frame(uq_df))
+        # Tag the fold: the five folds are five separately-fit models whose Cox scores
+        # share no common scale, so anything pooling them needs to know which is which.
+        pooled.append(to_patient_frame(uq_df).assign(fold=fold_index))
         mean_best = int(round(np.mean([h.get("best_epoch", 0) for h in member_histories])))
         print(
             f"{f'{fold_index + 1}/{N_SPLITS}':<6}{result['c_index']:>9.4f}"
