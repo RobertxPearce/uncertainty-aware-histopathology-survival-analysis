@@ -1,0 +1,2 @@
+n_test_patients,n_test_events,deterministic_cindex,deterministic_ci_low,deterministic_ci_high,sngp_cindex,sngp_ci_low,sngp_ci_high,sngp_selective_auc,sngp_mean_risk_std
+87,44,0.773371104815864,0.6987907280050101,0.8383770539668005,0.773371104815864,0.6987907280050101,0.8383770539668005,0.8632031514505583,0.3671550774711302

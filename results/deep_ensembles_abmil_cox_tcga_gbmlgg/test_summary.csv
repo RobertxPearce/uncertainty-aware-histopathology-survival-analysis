@@ -1,0 +1,2 @@
+n_test_patients,n_test_events,single_cindex,single_ci_low,single_ci_high,ensemble_cindex,ensemble_ci_low,ensemble_ci_high,ensemble_selective_auc,ensemble_mean_risk_std
+87,44,0.7813975448536356,0.7015706851244354,0.8467235610852633,0.7861189801699717,0.7147765530974501,0.850775428766625,0.7544830614804257,0.45727474645198213
